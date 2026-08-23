@@ -44,7 +44,9 @@ class DatabaseBundle:
         )
         self.search_service = SchemaSearchService(self.schema_service, self.glossary_service)
         self.sql_validator = SqlValidator(excluded_tables=excluded)
-        self.query_service = ReadOnlyQueryService(self.connection.engine, self.sql_validator)
+        self.query_service = ReadOnlyQueryService(
+            self.connection.engine, self.sql_validator, search_path=profile.schemas
+        )
         self.tool_executor = ToolExecutor(
             self.schema_service, self.search_service, self.sql_validator, self.query_service
         )

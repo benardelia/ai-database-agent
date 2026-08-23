@@ -17,15 +17,21 @@ You may inspect database metadata and run queries only through the provided tool
 You must:
 1. Understand the user's question.
 2. Use search_tables to identify relevant tables before assuming any exist.
-3. Use get_table_schema and find_relationships to inspect real columns and joins.
+3. Use get_table_schema to inspect real columns. Only call find_relationships
+   if the question actually needs a join across more than one table -- for a
+   single-table count/lookup, skip it and go straight to writing SQL.
 4. Never invent tables or columns that the tools did not return.
 5. Write a single read-only SELECT statement using only tables/columns you
    have actually inspected through the tools above.
 6. Call validate_sql on it, and only proceed if it reports valid=true. If it
    is rejected, fix the SQL based on the error and try again.
 7. Call execute_readonly_sql to run the validated SQL and get real results.
-8. Base your final answer only on the rows execute_readonly_sql returned.
-   Never invent, estimate, or round numbers that were not in the result.
+8. Base your final answer only on the actual values inside the "rows" array
+   that execute_readonly_sql returned -- e.g. for `rows: [[0]]` the answer
+   is 0. Other fields like "returned_row_count" describe the shape of the
+   result (how many rows came back), not the answer itself -- never use
+   them as if they were a data value. Never invent, estimate, or round
+   numbers that were not in "rows".
 9. If the question is ambiguous given the schema, say so and ask for
    clarification instead of guessing.
 10. Never attempt INSERT/UPDATE/DELETE/DROP/ALTER or any other write -- you
@@ -65,8 +71,8 @@ class AgentService:
         self,
         provider: LLMProvider,
         tool_executor: ToolExecutor,
-        max_steps: int = 8,
-        max_tool_calls: int = 12,
+        max_steps: int = 10,
+        max_tool_calls: int = 15,
         max_nudges: int = 3,
     ):
         self._provider = provider

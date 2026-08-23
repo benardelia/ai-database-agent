@@ -137,24 +137,28 @@ class ToolExecutor:
 
     def _dispatch(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         if tool_name == "search_tables":
-            results = self._search_service.search_tables(arguments["query"])
+            query = _get_arg(arguments, "query", "search_query", "term", "keyword")
+            results = self._search_service.search_tables(query)
             return {"results": [r.model_dump() for r in results]}
 
         if tool_name == "get_table_schema":
-            table = self._schema_service.get_table(arguments["table"])
+            table_name = _get_arg(arguments, "table", "table_name", "from_table")
+            table = self._schema_service.get_table(table_name)
             if table is None:
-                return {"error": f"Table '{arguments['table']}' was not found in the schema."}
+                return {"error": f"Table '{table_name}' was not found in the schema."}
             return table.model_dump()
 
         if tool_name == "find_relationships":
-            relationships = self._schema_service.find_relationships(arguments["table"])
+            table_name = _get_arg(arguments, "table", "table_name", "from_table", "source_table")
+            relationships = self._schema_service.find_relationships(table_name)
             return {"relationships": [r.model_dump() for r in relationships]}
 
         if tool_name == "validate_sql":
             if self._sql_validator is None:
                 return {"error": "SQL validation is not available."}
+            sql = _get_arg(arguments, "sql", "query", "statement")
             try:
-                validated_sql = self._sql_validator.validate(arguments["sql"])
+                validated_sql = self._sql_validator.validate(sql)
                 return {"valid": True, "sql": validated_sql}
             except SqlValidationError as exc:
                 return {"valid": False, "error": str(exc)}
@@ -162,10 +166,22 @@ class ToolExecutor:
         if tool_name == "execute_readonly_sql":
             if self._query_service is None:
                 return {"error": "SQL execution is not available."}
+            sql = _get_arg(arguments, "sql", "query", "statement")
             try:
-                result = self._query_service.execute(arguments["sql"])
+                result = self._query_service.execute(sql)
                 return result.model_dump()
             except (SqlValidationError, QueryExecutionError) as exc:
                 return {"error": str(exc)}
 
         return {"error": f"Unknown tool '{tool_name}'"}
+
+
+def _get_arg(arguments: dict[str, Any], canonical: str, *aliases: str) -> Any:
+    """Small local models don't always name arguments exactly as the tool
+    schema declares (e.g. 'from_table' instead of 'table'). Accept the
+    common near-misses instead of relying on the model to read an error
+    message and self-correct, which is unreliable for smaller models."""
+    for key in (canonical, *aliases):
+        if key in arguments and arguments[key] not in (None, "", []):
+            return arguments[key]
+    raise KeyError(f"'{canonical}'")
