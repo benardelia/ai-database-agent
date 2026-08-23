@@ -1,0 +1,10 @@
+{
+  "land parcel": ["land_parcel", "plot", "property"],
+  "owner": ["right_holder", "owner", "proprietor"],
+  "land rent": ["land_rent", "rent_assessment"],
+  "transaction": ["land_transaction", "transaction"],
+  "transfer": ["transaction_type = TRANSFER"],
+  "surrender": ["transaction_type = SURRENDER"],
+  "district": ["district"],
+  "ward": ["ward"]
+}
