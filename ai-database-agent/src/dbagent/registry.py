@@ -7,6 +7,7 @@ from dbagent.agent.service import AgentService
 from dbagent.ai.provider import LLMProvider
 from dbagent.ai.tools import ToolExecutor
 from dbagent.business.glossary_service import BusinessTermService
+from dbagent.business.metric_service import MetricService
 from dbagent.database import DatabaseConnection
 from dbagent.services.query_service import ReadOnlyQueryService
 from dbagent.services.sample_service import SampleDataService
@@ -22,6 +23,7 @@ class DatabaseProfile(BaseModel):
     schemas: list[str] = ["public"]
     excluded_tables: list[str] = []
     glossary_path: str | None = None
+    metrics_path: str | None = None
 
 
 class DatabaseBundle:
@@ -49,12 +51,14 @@ class DatabaseBundle:
             self.connection.engine, self.sql_validator, search_path=profile.schemas
         )
         self.sample_service = SampleDataService(self.schema_service, self.query_service)
+        self.metric_service = MetricService(profile.metrics_path)
         self.tool_executor = ToolExecutor(
             self.schema_service,
             self.search_service,
             self.sql_validator,
             self.query_service,
             self.sample_service,
+            self.metric_service,
         )
         self.agent_service = AgentService(llm_provider, self.tool_executor)
 
@@ -86,6 +90,8 @@ class DatabaseRegistry:
             profile = DatabaseProfile.model_validate(entry)
             if profile.glossary_path and not Path(profile.glossary_path).is_absolute():
                 profile.glossary_path = str(base_dir / profile.glossary_path)
+            if profile.metrics_path and not Path(profile.metrics_path).is_absolute():
+                profile.metrics_path = str(base_dir / profile.metrics_path)
             profiles[name] = profile
 
         return profiles

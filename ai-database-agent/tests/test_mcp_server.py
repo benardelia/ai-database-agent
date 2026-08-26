@@ -82,3 +82,22 @@ def test_get_sample_rows_excludes_sensitive_columns_via_mcp():
     result = _call("get_sample_rows", {"database": "my_store_db", "table": "product_table", "limit": 2})
     assert len(result["rows"]) <= 2
     assert "excluded_sensitive_columns" in result
+
+
+def test_list_business_metrics_via_mcp():
+    result = _call("list_business_metrics", {"database": "my_store_db"})
+    names = {m["name"] for m in result["metrics"]}
+    assert "completed_widgets" in names
+
+
+def test_compute_metric_via_mcp_returns_real_verified_value():
+    """Ground truth confirmed independently via psql: 7 widgets with
+    status='Completed' in the live my_store_db database."""
+    result = _call("compute_metric", {"database": "my_store_db", "name": "completed_widgets"})
+    assert result["rows"] == [[7]]
+
+
+def test_compute_metric_via_mcp_unavailable_for_database_without_metrics():
+    """my_case_db has no metrics_path configured -- must degrade gracefully."""
+    result = _call("list_business_metrics", {"database": "my_case_db"})
+    assert result["metrics"] == []

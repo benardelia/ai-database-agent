@@ -13,7 +13,8 @@ configured with two real databases:
 
 ## Status
 
-**Milestones 1-7 of the guide are implemented, plus multi-database support:**
+**Milestones 1-7 of the guide are implemented, plus the business-metrics piece of Milestone 8
+(semantic layer), plus multi-database support:**
 
 - **Multi-database registry** (`dbagent/registry.py`) -- `databases.json` describes any number
   of named database connections, each with its own URL, schema list, excluded-tables denylist,
@@ -55,11 +56,22 @@ configured with two real databases:
   all the same read-only/validation/exclusion protections.
 - **Phase 12/20 -- MCP server** (`dbagent/mcp_server.py`) -- exposes `list_databases`,
   `get_database_schema`, `search_tables`, `get_table_schema`, `find_relationships`,
-  `get_sample_rows`, `validate_sql`, `execute_readonly_sql` as standard MCP tools, so any
-  MCP-compatible client (Claude Desktop, Claude Code, etc.) can use the same tool layer our own
-  agent uses -- with the calling client's own model doing the reasoning instead of going through
-  our `AgentService`. Verified against a real stdio subprocess with the official MCP client SDK,
-  not just called as plain Python functions.
+  `get_sample_rows`, `list_business_metrics`, `compute_metric`, `validate_sql`,
+  `execute_readonly_sql` as standard MCP tools, so any MCP-compatible client (Claude Desktop,
+  Claude Code, etc.) can use the same tool layer our own agent uses -- with the calling client's
+  own model doing the reasoning instead of going through our `AgentService`. Verified against a
+  real stdio subprocess with the official MCP client SDK, not just called as plain Python
+  functions.
+- **Phase 15/26 -- business metrics registry** (`dbagent/business/metric_service.py`) -- trusted,
+  versioned SQL definitions per database (`metrics.json`: `completed_widgets`,
+  `completed_order_total`, `payments_total`, `active_item_count`,
+  `payments_in_period` [date-ranged]). `compute_metric` renders and runs a metric's
+  template through the exact same `SqlValidator`/`ReadOnlyQueryService` pipeline as any other
+  query -- date parameters are validated against a strict `YYYY-MM-DD` pattern before
+  substitution. The agent checks `list_business_metrics` before writing raw SQL for a concept
+  that matches one, so "how many completed orders" always uses the same trusted definition
+  instead of the model re-deriving the filter per question. All five metrics verified against
+  independently-confirmed ground truth (`psql` queries run before the metrics were written).
 
 Endpoints (all take `?database=<name>` or a `database` body field): `GET /api/databases` (lists
 configured names, no selector needed), `GET /api/schema`, `GET /api/schema/search`,
@@ -72,21 +84,62 @@ databases if you omit required arguments.
 
 ### Known limitation: small local model reliability
 
-`llama3.2:3b` reliably handles most 1-3 hop questions now (several real failure modes were
-found and fixed by testing against it live: unqualified-table search_path resolution, a
-field-name collision that caused a hallucinated answer, and tool-argument-name guessing) but can
-still occasionally stall or send unusual argument names on longer chains. The agent handles this
-gracefully (bounded nudges, tool-argument errors are fed back to the model instead of crashing --
-see `test_tool_executor.py`), but doesn't force a correct outcome every time. The
+`llama3.2:3b` reliably handles most 1-3 hop questions now -- several real failure modes were
+found and fixed by testing against it live, not just against unit tests:
+
+- Unqualified-table `search_path` resolution (a query against a non-`public` schema failed until
+  the query service started setting `search_path` explicitly).
+- A field-name collision (`row_count` next to `rows` in the same JSON) that caused a hallucinated
+  answer -- fixed by renaming to `returned_row_count` and tightening the prompt.
+- Tool-argument-name guessing (`from_table` instead of `table`, etc.) -- fixed with alias
+  tolerance in `ToolExecutor`.
+- **Runaway exploration after already getting the right answer**: a prompt instruction alone
+  ("stop once you have the answer") was not reliable -- the model kept calling unrelated
+  metrics/tables until it ran out of steps, even after a tool call had already returned the
+  correct value. Fixed structurally, not by prompting harder: once a `compute_metric` /
+  `execute_readonly_sql` call succeeds, the *next* turn omits tool definitions entirely, so the
+  model has no choice but to answer in text (see `test_tools_are_withheld_after_successful_data_result`).
+- **That fix's own failure mode**: force-stopping on *any* success meant a wrong-but-valid metric
+  guess (e.g. computing `completed_widgets`, a count, for a *revenue* question, after guessing a
+  nonexistent metric name first) got force-stopped into a confidently wrong answer -- worse than
+  the original bug, since a garbled loop became a plausible-sounding lie. Fixed with a one-time
+  "grace round": the success immediately after a wrong-metric-name guess is *not* trusted, but
+  the one after that is -- matching the guide's own "the agent may correct itself once, avoid
+  unlimited retries" principle (Phase 40). Verified live: the revenue question now correctly
+  self-corrects to `completed_order_total` ($239,267.19, exact ground-truth match) instead of
+  answering "32".
+- **Stray-tool-call-as-text reaching the user as a fake "answer"**: when self-correction nudges
+  ran out and the model was still emitting a tool call as JSON-shaped plain text, that raw text
+  was returned as if it were the real answer. Fixed to return an honest failure
+  (`stopped_reason="stray_tool_call_unresolved"`) instead of presenting garbage as data.
+- **A raw Ollama timeout crashed the API with a 500**: `POST /api/ai/query` returned an unhandled
+  500 with a full httpx stack trace when a single Ollama call took longer than the (120s at the
+  time) client timeout -- plausibly a model reload after Ollama's default ~5-minute idle unload,
+  compounded by a long tool-call chain growing the prompt each turn. Fixed on three levels:
+  `OllamaProvider` now catches `httpx` timeout/connection/status errors and raises a domain
+  `LLMProviderError` with an actionable message; `AgentService.ask()` catches that and returns a
+  normal `AgentResponse` (`stopped_reason="llm_provider_error"`) instead of letting it propagate,
+  consistent with how every other stop condition is surfaced; and the default timeout was raised
+  to 180s with `keep_alive=30m` sent on every request so Ollama holds the model in memory instead
+  of reloading it between requests. Both are configurable via `OLLAMA_TIMEOUT_SECONDS` /
+  `OLLAMA_KEEP_ALIVE` in `.env`.
+
+All of the above are locked in with unit tests using a scripted fake provider (deterministic,
+fast, no Ollama dependency) in `test_agent_service.py`, in addition to having been reproduced and
+re-verified live against the real model. The agent still doesn't force a correct outcome every
+time (e.g. a metric needing `start_date`/`end_date` can still stall on a multi-hop question), but
+it now fails honestly rather than confidently wrong or presenting garbled text. The
 validation/execution layers themselves are correct and safe regardless of what the model does or
 how it fails (verified independent of the LLM in `test_sql_validator.py` / `test_query_service.py`
-/ `test_sample_service.py`). A larger tool-calling model (e.g. `llama3.1:8b`, `qwen2.5:7b`) would
-likely be more reliable end-to-end; not pulled yet due to limited local disk space (~5GB free).
-The MCP server sidesteps this entirely for MCP clients, since reasoning happens in the *calling*
-client's model, not `llama3.2`.
+/ `test_sample_service.py` / `test_metric_service.py`). A larger tool-calling model (e.g.
+`llama3.1:8b`, `qwen2.5:7b`) would likely be more reliable end-to-end; not pulled yet due to
+limited local disk space (~5GB free). The MCP server sidesteps this entirely for MCP clients,
+since reasoning happens in the *calling* client's model, not `llama3.2`.
 
-Not yet implemented: semantic layer / business metrics registry, embeddings/RAG, multi-step
-analytics, charts/reports, audit trail, and everything past Milestone 7 in the guide.
+Not yet implemented: embeddings/RAG (guide explicitly says these only become useful once a schema
+gets large -- my_case_db/my_store_db are still small enough for keyword search), multi-step analytics,
+charts/reports, audit trail, role-based access control, and everything past Milestone 8 in the
+guide.
 
 ## Security notes
 
@@ -137,13 +190,15 @@ Add an entry to `databases.json`:
     "database_url": "postgresql+psycopg://ai_readonly:password@localhost:5432/my_other_db",
     "schemas": ["public"],
     "excluded_tables": [],
-    "glossary_path": "src/dbagent/business/glossary_my_other_db.json"
+    "glossary_path": "src/dbagent/business/glossary_my_other_db.json",
+    "metrics_path": "src/dbagent/business/metrics_my_other_db.json"
   }
 }
 ```
 
-`schemas`, `excluded_tables`, and `glossary_path` are all optional (default to `["public"]`,
-`[]`, and the shared default glossary respectively). Create a dedicated read-only role on that
+`schemas`, `excluded_tables`, `glossary_path`, and `metrics_path` are all optional (default to
+`["public"]`, `[]`, no glossary, and no metrics respectively -- `list_business_metrics` just
+returns an empty list if `metrics_path` isn't set). Create a dedicated read-only role on that
 database first (Phase 1 -- see the `CREATE USER ... SELECT only` pattern in the implementation
 guide), the same way `ai_readonly` was set up for `my_case_db` and `my_store_db`. Check what's actually in the
 schema before granting broadly -- credential/session/token tables should be excluded the same way

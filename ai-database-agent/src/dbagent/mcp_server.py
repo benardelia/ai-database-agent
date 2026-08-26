@@ -12,7 +12,8 @@ from typing import Any
 
 from mcp.server import MCPServer
 
-from dbagent.ai.provider import OllamaProvider
+from dbagent.ai.provider import build_ollama_provider
+from dbagent.business.metric_service import MetricError
 from dbagent.config import settings
 from dbagent.registry import DatabaseBundle, DatabaseRegistry
 from dbagent.services.query_service import QueryExecutionError
@@ -24,8 +25,7 @@ mcp = MCPServer("ai-database-agent")
 # The LLM provider is only needed here because DatabaseBundle builds a full
 # AgentService per database; the MCP tools below never call it -- reasoning
 # is the calling client's job, not this server's.
-_llm_provider = OllamaProvider(host=settings.ollama_host, model=settings.ollama_model)
-_registry = DatabaseRegistry(settings.databases_config_path, _llm_provider)
+_registry = DatabaseRegistry(settings.databases_config_path, build_ollama_provider())
 
 
 def _bundle(database: str) -> DatabaseBundle | None:
@@ -104,6 +104,40 @@ def get_sample_rows(database: str, table: str, limit: int = 10) -> dict[str, Any
         "rows": result.rows,
         "excluded_sensitive_columns": excluded_columns,
     }
+
+
+@mcp.tool()
+def list_business_metrics(database: str) -> dict[str, Any]:
+    """List trusted, pre-defined business metrics for this database (e.g.
+    'completed_widgets', 'total_revenue'). Prefer these over writing raw SQL
+    for a concept that matches one, since they guarantee consistent business
+    logic instead of letting the model re-derive it per question."""
+    bundle = _bundle(database)
+    if bundle is None:
+        return _unknown_database_error(database)
+    return {"metrics": [m.model_dump() for m in bundle.metric_service.list_metrics()]}
+
+
+@mcp.tool()
+def compute_metric(
+    database: str, name: str, start_date: str | None = None, end_date: str | None = None
+) -> dict[str, Any]:
+    """Compute a trusted business metric by name (from list_business_metrics)
+    and return the real result. Some metrics need start_date/end_date
+    (YYYY-MM-DD); list_business_metrics tells you which."""
+    bundle = _bundle(database)
+    if bundle is None:
+        return _unknown_database_error(database)
+    try:
+        sql = bundle.metric_service.render_sql(name, start_date, end_date)
+    except MetricError as exc:
+        return {"error": str(exc)}
+    try:
+        result = bundle.query_service.execute(sql)
+    except (SqlValidationError, QueryExecutionError) as exc:
+        return {"error": str(exc)}
+    metric = bundle.metric_service.get_metric(name)
+    return {**result.model_dump(), "metric": metric.name, "metric_description": metric.description}
 
 
 @mcp.tool()

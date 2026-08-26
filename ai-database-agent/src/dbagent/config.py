@@ -21,6 +21,11 @@ class Settings(BaseSettings):
 
     ollama_host: str = "http://localhost:11434"
     ollama_model: str = "llama3.2"
+    ollama_timeout_seconds: float = 300.0
+    # How long Ollama keeps the model resident in memory between requests.
+    # Idling past this triggers a full reload on the next request, which
+    # can itself take long enough to blow past a per-call timeout.
+    ollama_keep_alive: str = "30m"
 
 
 settings = Settings()

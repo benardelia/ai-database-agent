@@ -1,5 +1,6 @@
 from typing import Any
 
+from dbagent.business.metric_service import MetricError, MetricService
 from dbagent.services.query_service import QueryExecutionError, ReadOnlyQueryService
 from dbagent.services.sample_service import SampleDataError, SampleDataService
 from dbagent.services.schema_service import DatabaseSchemaService
@@ -84,6 +85,43 @@ GET_SAMPLE_ROWS_TOOL = {
     },
 }
 
+LIST_BUSINESS_METRICS_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "list_business_metrics",
+        "description": (
+            "List trusted, pre-defined business metrics for this database "
+            "(e.g. 'completed_widgets', 'total_revenue'). Check this before "
+            "writing your own SQL for a concept that sounds like a standard "
+            "business metric -- using a trusted definition avoids "
+            "reinventing business logic inconsistently."
+        ),
+        "parameters": {"type": "object", "properties": {}},
+    },
+}
+
+COMPUTE_METRIC_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "compute_metric",
+        "description": (
+            "Compute a trusted business metric by name (from "
+            "list_business_metrics) and return the real result. Some "
+            "metrics need start_date/end_date (YYYY-MM-DD); "
+            "list_business_metrics tells you which."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Exact metric name"},
+                "start_date": {"type": "string", "description": "YYYY-MM-DD, if the metric needs a period"},
+                "end_date": {"type": "string", "description": "YYYY-MM-DD, if the metric needs a period"},
+            },
+            "required": ["name"],
+        },
+    },
+}
+
 VALIDATE_SQL_TOOL = {
     "type": "function",
     "function": {
@@ -127,6 +165,8 @@ AGENT_TOOLS = [
     GET_TABLE_SCHEMA_TOOL,
     FIND_RELATIONSHIPS_TOOL,
     GET_SAMPLE_ROWS_TOOL,
+    LIST_BUSINESS_METRICS_TOOL,
+    COMPUTE_METRIC_TOOL,
     VALIDATE_SQL_TOOL,
     EXECUTE_READONLY_SQL_TOOL,
 ]
@@ -145,12 +185,14 @@ class ToolExecutor:
         sql_validator: SqlValidator | None = None,
         query_service: ReadOnlyQueryService | None = None,
         sample_service: SampleDataService | None = None,
+        metric_service: MetricService | None = None,
     ):
         self._schema_service = schema_service
         self._search_service = search_service
         self._sql_validator = sql_validator
         self._query_service = query_service
         self._sample_service = sample_service
+        self._metric_service = metric_service
 
     def execute(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         try:
@@ -197,6 +239,32 @@ class ToolExecutor:
                 }
             except SampleDataError as exc:
                 return {"error": str(exc)}
+
+        if tool_name == "list_business_metrics":
+            if self._metric_service is None:
+                return {"metrics": []}
+            return {"metrics": [m.model_dump() for m in self._metric_service.list_metrics()]}
+
+        if tool_name == "compute_metric":
+            if self._metric_service is None or self._query_service is None:
+                return {"error": "Business metrics are not available."}
+            metric_name = _get_arg(arguments, "name", "metric", "metric_name")
+            start_date = arguments.get("start_date")
+            end_date = arguments.get("end_date")
+            try:
+                sql = self._metric_service.render_sql(metric_name, start_date, end_date)
+            except MetricError as exc:
+                return {"error": str(exc)}
+            try:
+                result = self._query_service.execute(sql)
+            except (SqlValidationError, QueryExecutionError) as exc:
+                return {"error": str(exc)}
+            metric = self._metric_service.get_metric(metric_name)
+            return {
+                **result.model_dump(),
+                "metric": metric.name,
+                "metric_description": metric.description,
+            }
 
         if tool_name == "validate_sql":
             if self._sql_validator is None:

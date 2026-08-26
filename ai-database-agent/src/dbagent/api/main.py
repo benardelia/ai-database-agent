@@ -2,15 +2,14 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from dbagent.agent.models import AgentResponse
-from dbagent.ai.provider import OllamaProvider
+from dbagent.ai.provider import build_ollama_provider
 from dbagent.config import settings
 from dbagent.metadata.models import DatabaseSchema, RelationshipMetadata, TableSearchResult
 from dbagent.registry import DatabaseBundle, DatabaseRegistry
 
 app = FastAPI(title="AI Database Reasoning Agent")
 
-llm_provider = OllamaProvider(host=settings.ollama_host, model=settings.ollama_model)
-registry = DatabaseRegistry(settings.databases_config_path, llm_provider)
+registry = DatabaseRegistry(settings.databases_config_path, build_ollama_provider())
 
 
 def _bundle(database: str) -> DatabaseBundle:
