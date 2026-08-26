@@ -1,0 +1,6 @@
+{
+  "product": ["product_table_name"],
+  "customer": ["customer_table_name"],
+  "order": ["order_table_name", "order_item_table_name"],
+  "payment": ["payment_table_name"]
+}

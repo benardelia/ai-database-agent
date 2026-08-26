@@ -1,5 +1,15 @@
 .env
 databases.json
+
+# Per-database business content (schema notes / glossary / metrics tied to
+# a real, private database). Only the generic *.example.* templates should
+# ever be committed -- see "Adding a database" in the README. Naming
+# convention keeps these patterns from matching the templates themselves
+# (glossary.example.json has a dot, not an underscore, after "glossary").
+src/dbagent/business/context_*.md
+src/dbagent/business/glossary_*.json
+src/dbagent/business/metrics_*.json
+
 __pycache__/
 *.pyc
 .venv/

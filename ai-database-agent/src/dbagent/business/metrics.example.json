@@ -1,0 +1,16 @@
+[
+  {
+    "name": "completed_widgets",
+    "description": "Count of orders whose status is Completed.",
+    "sql": "SELECT COUNT(*) AS completed_widgets FROM your_order_table WHERE status = 'Completed'",
+    "category": "orders",
+    "version": 1
+  },
+  {
+    "name": "revenue_in_period",
+    "description": "Sum of amount for successful payments in [start_date, end_date). Shows the {start_date}/{end_date} template pattern -- both are validated as strict YYYY-MM-DD before substitution.",
+    "sql": "SELECT SUM(amount) AS revenue_in_period FROM your_payment_table WHERE status = 'Success' AND payment_date >= '{start_date}' AND payment_date < '{end_date}'",
+    "category": "payments",
+    "version": 1
+  }
+]

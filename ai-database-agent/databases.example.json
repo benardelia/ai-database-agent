@@ -15,8 +15,8 @@
     "database_url": "postgresql+psycopg://ai_readonly:password@localhost:5432/my_store_db",
     "schemas": ["public"],
     "excluded_tables": [],
-    "glossary_path": "src/dbagent/business/glossary.json",
-    "metrics_path": "src/dbagent/business/metrics.json",
-    "context_path": "src/dbagent/business/context.md"
+    "glossary_path": "src/dbagent/business/glossary.example.json",
+    "metrics_path": "src/dbagent/business/metrics.example.json",
+    "context_path": "src/dbagent/business/context.example.md"
   }
 }
