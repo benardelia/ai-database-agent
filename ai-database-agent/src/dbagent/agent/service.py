@@ -11,6 +11,9 @@ You may inspect database metadata and run queries only through the provided tool
 - search_tables: find tables relevant to a business concept
 - get_table_schema: inspect a table's columns, keys and relationships
 - find_relationships: discover how a table connects to other tables
+- get_sample_rows: see a few example values from a table's columns (e.g.
+  what values a "status" column actually contains) -- optional, only use it
+  if you're unsure what values to filter/compare against
 - validate_sql: check a generated SQL statement before running it
 - execute_readonly_sql: run a validated read-only SELECT and get real rows back
 

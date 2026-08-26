@@ -1,6 +1,7 @@
 from typing import Any
 
 from dbagent.services.query_service import QueryExecutionError, ReadOnlyQueryService
+from dbagent.services.sample_service import SampleDataError, SampleDataService
 from dbagent.services.schema_service import DatabaseSchemaService
 from dbagent.services.search_service import SchemaSearchService
 from dbagent.services.sql_validator import SqlValidationError, SqlValidator
@@ -59,6 +60,30 @@ FIND_RELATIONSHIPS_TOOL = {
     },
 }
 
+GET_SAMPLE_ROWS_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "get_sample_rows",
+        "description": (
+            "Return a small number of example rows from a table so you can "
+            "see what its values actually look like (e.g. that 'status' "
+            "contains ACTIVE/PENDING/COMPLETED). Sensitive-looking columns "
+            "(passwords, tokens, card numbers, etc.) are never included."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "table": {"type": "string", "description": "Exact table name"},
+                "limit": {
+                    "type": "integer",
+                    "description": "Max rows to return (default 10)",
+                },
+            },
+            "required": ["table"],
+        },
+    },
+}
+
 VALIDATE_SQL_TOOL = {
     "type": "function",
     "function": {
@@ -101,6 +126,7 @@ AGENT_TOOLS = [
     SEARCH_TABLES_TOOL,
     GET_TABLE_SCHEMA_TOOL,
     FIND_RELATIONSHIPS_TOOL,
+    GET_SAMPLE_ROWS_TOOL,
     VALIDATE_SQL_TOOL,
     EXECUTE_READONLY_SQL_TOOL,
 ]
@@ -118,11 +144,13 @@ class ToolExecutor:
         search_service: SchemaSearchService,
         sql_validator: SqlValidator | None = None,
         query_service: ReadOnlyQueryService | None = None,
+        sample_service: SampleDataService | None = None,
     ):
         self._schema_service = schema_service
         self._search_service = search_service
         self._sql_validator = sql_validator
         self._query_service = query_service
+        self._sample_service = sample_service
 
     def execute(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         try:
@@ -152,6 +180,23 @@ class ToolExecutor:
             table_name = _get_arg(arguments, "table", "table_name", "from_table", "source_table")
             relationships = self._schema_service.find_relationships(table_name)
             return {"relationships": [r.model_dump() for r in relationships]}
+
+        if tool_name == "get_sample_rows":
+            if self._sample_service is None:
+                return {"error": "Sample data access is not available."}
+            table_name = _get_arg(arguments, "table", "table_name", "from_table")
+            limit = arguments.get("limit") or 10
+            try:
+                result, excluded_columns = self._sample_service.get_sample_rows(
+                    table_name, limit=limit
+                )
+                return {
+                    "columns": result.columns,
+                    "rows": result.rows,
+                    "excluded_sensitive_columns": excluded_columns,
+                }
+            except SampleDataError as exc:
+                return {"error": str(exc)}
 
         if tool_name == "validate_sql":
             if self._sql_validator is None:

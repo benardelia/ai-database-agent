@@ -9,6 +9,7 @@ from dbagent.ai.tools import ToolExecutor
 from dbagent.business.glossary_service import BusinessTermService
 from dbagent.database import DatabaseConnection
 from dbagent.services.query_service import ReadOnlyQueryService
+from dbagent.services.sample_service import SampleDataService
 from dbagent.services.schema_service import DatabaseSchemaService
 from dbagent.services.search_service import SchemaSearchService
 from dbagent.services.sql_validator import SqlValidator
@@ -47,8 +48,13 @@ class DatabaseBundle:
         self.query_service = ReadOnlyQueryService(
             self.connection.engine, self.sql_validator, search_path=profile.schemas
         )
+        self.sample_service = SampleDataService(self.schema_service, self.query_service)
         self.tool_executor = ToolExecutor(
-            self.schema_service, self.search_service, self.sql_validator, self.query_service
+            self.schema_service,
+            self.search_service,
+            self.sql_validator,
+            self.query_service,
+            self.sample_service,
         )
         self.agent_service = AgentService(llm_provider, self.tool_executor)
 
