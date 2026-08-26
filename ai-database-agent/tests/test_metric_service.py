@@ -1,15 +1,64 @@
-from pathlib import Path
+import json
 
 import pytest
 
 from dbagent.business.metric_service import MetricError, MetricService
 
-METRICS_PATH = Path(__file__).resolve().parents[1] / "src/dbagent/business/metrics.json"
+
+@pytest.fixture
+def metrics_path(tmp_path):
+    path = tmp_path / "metrics.json"
+    path.write_text(
+        json.dumps(
+            [
+                {
+                    "name": "completed_widgets",
+                    "description": "Count of widgets whose status is Completed.",
+                    "sql": "SELECT COUNT(*) AS completed_widgets FROM widget WHERE status = 'Completed'",
+                    "category": "widgets",
+                    "version": 1,
+                },
+                {
+                    "name": "completed_order_total",
+                    "description": "Sum of price across widgets whose status is Completed.",
+                    "sql": "SELECT SUM(price) AS completed_order_total FROM widget WHERE status = 'Completed'",
+                    "category": "widgets",
+                    "version": 1,
+                },
+                {
+                    "name": "payments_total",
+                    "description": "Sum of amount across payments whose status is Success.",
+                    "sql": "SELECT SUM(amount) AS payments_total FROM payment WHERE status = 'Success'",
+                    "category": "payments",
+                    "version": 1,
+                },
+                {
+                    "name": "active_item_count",
+                    "description": "Count of widgets.",
+                    "sql": "SELECT COUNT(*) AS active_item_count FROM widget",
+                    "category": "widgets",
+                    "version": 1,
+                },
+                {
+                    "name": "payments_in_period",
+                    "description": "Sum of amount across successful payments with paid_at in [start_date, end_date).",
+                    "sql": (
+                        "SELECT SUM(amount) AS payments_in_period FROM payment "
+                        "WHERE status = 'Success' AND paid_at >= '{start_date}' "
+                        "AND paid_at < '{end_date}'"
+                    ),
+                    "category": "payments",
+                    "version": 1,
+                },
+            ]
+        )
+    )
+    return path
 
 
 @pytest.fixture
-def service() -> MetricService:
-    return MetricService(METRICS_PATH)
+def service(metrics_path) -> MetricService:
+    return MetricService(metrics_path)
 
 
 def test_list_metrics_loads_all_entries(service: MetricService):
