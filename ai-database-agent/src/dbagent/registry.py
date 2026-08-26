@@ -24,6 +24,7 @@ class DatabaseProfile(BaseModel):
     excluded_tables: list[str] = []
     glossary_path: str | None = None
     metrics_path: str | None = None
+    context_path: str | None = None
 
 
 class DatabaseBundle:
@@ -60,7 +61,12 @@ class DatabaseBundle:
             self.sample_service,
             self.metric_service,
         )
-        self.agent_service = AgentService(llm_provider, self.tool_executor)
+        database_context = (
+            Path(profile.context_path).read_text() if profile.context_path else None
+        )
+        self.agent_service = AgentService(
+            llm_provider, self.tool_executor, database_context=database_context
+        )
 
 
 class DatabaseRegistry:
@@ -92,6 +98,8 @@ class DatabaseRegistry:
                 profile.glossary_path = str(base_dir / profile.glossary_path)
             if profile.metrics_path and not Path(profile.metrics_path).is_absolute():
                 profile.metrics_path = str(base_dir / profile.metrics_path)
+            if profile.context_path and not Path(profile.context_path).is_absolute():
+                profile.context_path = str(base_dir / profile.context_path)
             profiles[name] = profile
 
         return profiles

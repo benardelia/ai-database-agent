@@ -1,6 +1,6 @@
 from typing import Any
 
-from dbagent.agent.service import AgentService
+from dbagent.agent.service import SYSTEM_PROMPT, AgentService
 from dbagent.ai.provider import LLMProvider, LLMProviderError
 
 
@@ -30,15 +30,17 @@ class FakeToolExecutor:
 
 class ScriptedProvider(LLMProvider):
     """Returns a scripted sequence of assistant messages, one per call, and
-    records the `tools` argument it was called with each time."""
+    records the `tools`/`messages` arguments it was called with each time."""
 
     def __init__(self, responses: list[dict[str, Any]]):
         self._responses = responses
         self._index = 0
         self.tools_seen: list[Any] = []
+        self.messages_seen: list[list[dict[str, Any]]] = []
 
     def chat(self, messages, tools=None) -> dict[str, Any]:
         self.tools_seen.append(tools)
+        self.messages_seen.append(messages)
         response = self._responses[self._index]
         self._index = min(self._index + 1, len(self._responses) - 1)
         return response
@@ -268,3 +270,32 @@ def test_llm_provider_error_returns_clean_response_not_exception():
     assert response.stopped_reason == "llm_provider_error"
     assert "Ollama did not respond within 180s." in response.answer
     assert response.steps == []
+
+
+def test_database_context_is_appended_to_system_prompt():
+    provider = ScriptedProvider([_final_message("hi")])
+    executor = FakeToolExecutor()
+    agent = AgentService(
+        provider,
+        executor,
+        database_context="There is no table called order_records -- orders are order_table.",
+    )
+
+    assert "order_records" in agent.system_prompt
+    assert "order_table" in agent.system_prompt
+
+    agent.ask("something")
+
+    # The composed prompt (not just the base SYSTEM_PROMPT) must be what
+    # actually gets sent to the provider as the system message.
+    sent_system_message = provider.messages_seen[0][0]
+    assert sent_system_message["role"] == "system"
+    assert "order_records" in sent_system_message["content"]
+
+
+def test_without_database_context_prompt_is_unchanged():
+    provider = ScriptedProvider([_final_message("hi")])
+    executor = FakeToolExecutor()
+    agent = AgentService(provider, executor)
+
+    assert agent.system_prompt == SYSTEM_PROMPT

@@ -95,16 +95,36 @@ class AgentService:
         max_steps: int = 10,
         max_tool_calls: int = 15,
         max_nudges: int = 3,
+        database_context: str | None = None,
     ):
         self._provider = provider
         self._tool_executor = tool_executor
         self._max_steps = max_steps
         self._max_tool_calls = max_tool_calls
         self._max_nudges = max_nudges
+        # Optional, per-database schema/domain notes (see
+        # DatabaseProfile.context_path). Additive, not a replacement -- the
+        # core rules above (read-only, stop conditions, metric priority,
+        # etc.) still apply; this only supplements them with concrete facts
+        # about *this* database, which cuts down on a small model
+        # hallucinating table names (e.g. "order_records" instead of the
+        # real "order_table") instead of using search_tables/get_table_schema.
+        self._system_prompt = SYSTEM_PROMPT
+        if database_context:
+            self._system_prompt += (
+                "\n\nDatabase-specific notes (verified against the real "
+                "schema -- still confirm with get_table_schema if unsure, "
+                "but you can trust these as a starting point):\n\n"
+                + database_context
+            )
+
+    @property
+    def system_prompt(self) -> str:
+        return self._system_prompt
 
     def ask(self, question: str) -> AgentResponse:
         messages: list[dict[str, Any]] = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": self._system_prompt},
             {"role": "user", "content": question},
         ]
         steps: list[AgentStep] = []

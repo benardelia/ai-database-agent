@@ -78,3 +78,33 @@ def test_each_database_gets_its_own_schema_scope(tmp_path, ilcms_db_connection):
     assert "record" in ilcms_tables
     assert "spatial_ref_sys" not in ilcms_tables
     assert "user_credentials" not in ilcms_tables
+
+
+def test_context_path_is_loaded_and_appended_to_agent_system_prompt(
+    tmp_path, ilcms_db_connection
+):
+    context_file = tmp_path / "context.md"
+    context_file.write_text("There is no table called order_records -- use order_table.")
+
+    url = str(ilcms_db_connection.engine.url)
+    config_path = _write_config(
+        tmp_path, {"my_case_db": {"database_url": url, "context_path": "context.md"}}
+    )
+    registry = DatabaseRegistry(config_path, FakeProvider())
+
+    bundle = registry.get("my_case_db")
+
+    assert "order_records" in bundle.agent_service.system_prompt
+    assert "order_table" in bundle.agent_service.system_prompt
+
+
+def test_missing_context_path_leaves_prompt_unchanged(tmp_path, ilcms_db_connection):
+    from dbagent.agent.service import SYSTEM_PROMPT
+
+    url = str(ilcms_db_connection.engine.url)
+    config_path = _write_config(tmp_path, {"my_case_db": {"database_url": url}})
+    registry = DatabaseRegistry(config_path, FakeProvider())
+
+    bundle = registry.get("my_case_db")
+
+    assert bundle.agent_service.system_prompt == SYSTEM_PROMPT

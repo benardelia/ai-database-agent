@@ -16,6 +16,7 @@
     "schemas": ["public"],
     "excluded_tables": [],
     "glossary_path": "src/dbagent/business/glossary.json",
-    "metrics_path": "src/dbagent/business/metrics.json"
+    "metrics_path": "src/dbagent/business/metrics.json",
+    "context_path": "src/dbagent/business/context.md"
   }
 }

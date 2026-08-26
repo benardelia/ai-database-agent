@@ -72,6 +72,17 @@ configured with two real databases:
   that matches one, so "how many completed orders" always uses the same trusted definition
   instead of the model re-deriving the filter per question. All five metrics verified against
   independently-confirmed ground truth (`psql` queries run before the metrics were written).
+- **Per-database context notes** (`DatabaseProfile.context_path`, optional) -- a plain-text/
+  markdown file of curated, *verified* schema facts appended to the agent's system prompt for
+  that database (`context.md`: real table/column names, FK targets, observed enum values,
+  explicit "there is no `order_records` table" callouts for names a model might guess). This is
+  additive, not a replacement for tool-based discovery -- it just gives the model a head start so
+  it doesn't need search_tables/get_table_schema for tables it already "knows" about, which
+  matters a lot for a 3B model prone to guessing plausible-sounding table names (observed live:
+  "give last 3 order records" hallucinated a `FROM order_records` query before this was added;
+  went straight to the correct `order_table` in one tool call after). Every fact in `context.md`
+  was checked against the live schema via `psql` before being written -- the agent's own core
+  "never invent" rules still apply, this only supplements them with things already confirmed true.
 
 Endpoints (all take `?database=<name>` or a `database` body field): `GET /api/databases` (lists
 configured names, no selector needed), `GET /api/schema`, `GET /api/schema/search`,
@@ -127,8 +138,11 @@ found and fixed by testing against it live, not just against unit tests:
 All of the above are locked in with unit tests using a scripted fake provider (deterministic,
 fast, no Ollama dependency) in `test_agent_service.py`, in addition to having been reproduced and
 re-verified live against the real model. The agent still doesn't force a correct outcome every
-time (e.g. a metric needing `start_date`/`end_date` can still stall on a multi-hop question), but
-it now fails honestly rather than confidently wrong or presenting garbled text. The
+time (e.g. a metric needing `start_date`/`end_date` can still stall on a multi-hop question, and
+the model can still mangle a field while writing its prose summary -- e.g. reporting "Customer
+ID: 1" for all three rows in a "last 3 orders" answer when the real `customer_id` values were
+UUIDs, even though the underlying data it pulled was correct), but it now fails honestly rather
+than confidently wrong or presenting garbled text. The
 validation/execution layers themselves are correct and safe regardless of what the model does or
 how it fails (verified independent of the LLM in `test_sql_validator.py` / `test_query_service.py`
 / `test_sample_service.py` / `test_metric_service.py`). A larger tool-calling model (e.g.
@@ -191,19 +205,28 @@ Add an entry to `databases.json`:
     "schemas": ["public"],
     "excluded_tables": [],
     "glossary_path": "src/dbagent/business/glossary_my_other_db.json",
-    "metrics_path": "src/dbagent/business/metrics_my_other_db.json"
+    "metrics_path": "src/dbagent/business/metrics_my_other_db.json",
+    "context_path": "src/dbagent/business/context_my_other_db.md"
   }
 }
 ```
 
-`schemas`, `excluded_tables`, `glossary_path`, and `metrics_path` are all optional (default to
-`["public"]`, `[]`, no glossary, and no metrics respectively -- `list_business_metrics` just
-returns an empty list if `metrics_path` isn't set). Create a dedicated read-only role on that
-database first (Phase 1 -- see the `CREATE USER ... SELECT only` pattern in the implementation
-guide), the same way `ai_readonly` was set up for `my_case_db` and `my_store_db`. Check what's actually in the
-schema before granting broadly -- credential/session/token tables should be excluded the same way
-(`REVOKE` at the DB level + `excluded_tables` in the config). No restart-time code change is
-needed; the new name shows up in `GET /api/databases` and can be used immediately.
+`schemas`, `excluded_tables`, `glossary_path`, `metrics_path`, and `context_path` are all optional
+(default to `["public"]`, `[]`, no glossary, no metrics, and no extra context respectively).
+Create a dedicated read-only role on that database first (Phase 1 -- see the
+`CREATE USER ... SELECT only` pattern in the implementation guide), the same way `ai_readonly` was
+set up for `my_case_db` and `my_store_db`. Check what's actually in the schema before granting broadly --
+credential/session/token tables should be excluded the same way (`REVOKE` at the DB level +
+`excluded_tables` in the config). No restart-time code change is needed; the new name shows up in
+`GET /api/databases` and can be used immediately.
+
+`context_path` points at a plain-text/markdown file of schema notes appended to that database's
+agent system prompt -- **only write facts you've actually verified against the live schema**
+(`psql`/`get_table_schema`), never guessed or copied from a similar-looking app. A wrong fact in
+here is worse than no context at all, since the agent is told to trust it. Keep it concise: table
+names, real column names, FK targets, and any observed enum-like values are far more useful than
+long prose or example queries -- a smaller model's attention degrades with prompt length, so the
+goal is a dense cheat-sheet, not documentation.
 
 ## Run
 
