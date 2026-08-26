@@ -9,8 +9,8 @@ are far more useful than long prose or example queries. A few lines of format to
 - `<table_name>`: <col1>, <col2>, <col3>, ... -- one line per table, just the column names
   that actually exist (check with get_table_schema first).
 - Call out anything a model might plausibly guess wrong, e.g. "There is no table called
-  `orders` -- the real table is `order_table`" or "There is no `price` column -- use
-  `selling_price`."
+  `orders` -- the real table is `customer_order`" or "There is no `price` column -- use
+  `unit_price`."
 - Note observed enum-like values only if you've actually seen them (e.g. via
   get_sample_rows), phrased as "confirm others before assuming they exist."
 - One line on the main relationships/foreign keys, if not obvious from table names.

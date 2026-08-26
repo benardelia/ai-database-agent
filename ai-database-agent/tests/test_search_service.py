@@ -6,8 +6,8 @@ from dbagent.services.search_service import SchemaSearchService
 
 
 @pytest.fixture(scope="module")
-def search_service(ilcms_db_connection: DatabaseConnection) -> SchemaSearchService:
-    schema_service = DatabaseSchemaService(ilcms_db_connection.engine)
+def search_service(pg_test_connection: DatabaseConnection) -> SchemaSearchService:
+    schema_service = DatabaseSchemaService(pg_test_connection.engine)
     return SchemaSearchService(schema_service)
 
 

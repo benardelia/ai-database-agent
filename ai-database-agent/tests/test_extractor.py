@@ -6,13 +6,13 @@ from dbagent.metadata.models import DatabaseSchema
 
 
 @pytest.fixture(scope="module")
-def schema(ilcms_db_connection: DatabaseConnection) -> DatabaseSchema:
-    extractor = MetadataExtractor(ilcms_db_connection.engine)
-    return extractor.extract(database_name="my_case_db", schemas="public")
+def schema(pg_test_connection: DatabaseConnection) -> DatabaseSchema:
+    extractor = MetadataExtractor(pg_test_connection.engine)
+    return extractor.extract(database_name="test_db", schemas="public")
 
 
 def test_extract_returns_database_schema(schema: DatabaseSchema):
-    assert schema.database_name == "my_case_db"
+    assert schema.database_name == "test_db"
     assert isinstance(schema.tables, list)
 
 

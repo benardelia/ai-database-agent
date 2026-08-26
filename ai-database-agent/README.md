@@ -2,14 +2,13 @@
 
 Incremental implementation following `AI_Database_Reasoning_Agent_Implementation_Guide.md`.
 Not bound to one database -- any number of PostgreSQL databases can be configured via
-`databases.json` and selected at request time (Phase 50: multi-database support). Currently
-configured with two real databases:
-
-- `my_case_db` -- a land case management system (`record`, `person`, `transaction`,
-  `region`, `subregion`, etc., in the `my_case_db` / `app_schema_dict` schemas -- not `public`, which
-  only holds PostGIS system tables).
-- `my_store_db` -- a Django-based store management system (`product_table`, `order_table`,
-  `customer_table`, `payment_table`, etc., in `public`).
+`databases.json` and selected at request time (Phase 50: multi-database support).
+`databases.json` is gitignored (it holds real connection strings); this repo ships only
+`databases.example.json`, a generic template. Development and testing were done against two
+private local databases (a multi-schema case-management-style system and a single-schema
+e-commerce-style system) -- no real schema, table names, or data from either appears in this
+repo or its history; the test suite builds and tears down its own fully synthetic schema
+instead (see `tests/conftest.py`).
 
 ## Status
 
@@ -20,8 +19,8 @@ configured with two real databases:
   of named database connections, each with its own URL, schema list, excluded-tables denylist,
   and business glossary. `DatabaseRegistry` lazily builds and caches one full set of
   services/engine per configured name. Every API endpoint, script, and MCP tool takes a
-  `database` selector; adding a database is a config file entry, not a code change (proven live
-  in `test_registry.py::test_each_database_gets_its_own_schema_scope`).
+  `database` selector; adding a database is a config file entry, not a code change (proven in
+  `test_registry.py::test_each_database_gets_its_own_schema_scope`, against a synthetic schema).
 - **Phase 1** -- connects through a dedicated read-only role (`ai_readonly`) per database, scoped
   to specific schemas, with credential/session/token tables explicitly excluded at both the DB
   grant level and the app metadata level (see "Security notes").
@@ -32,7 +31,7 @@ configured with two real databases:
   names, comments, business-glossary aliases) + `BusinessTermService` / per-database glossary
   files mapping user terminology to real table/column names.
 - Relationship discovery: `DatabaseSchemaService.find_relationships()` (both directions),
-  verified against real FKs.
+  verified against real FKs (including self-referencing ones).
 - **Phase 6 + 11 (tool calling)** -- `LLMProvider` abstraction with `OllamaProvider` as the
   primary backend (local, `llama3.2`, shared across all configured databases); `AgentService`
   runs a bounded tool-calling loop with `max_steps` / `max_tool_calls` guards (Phase 30),
@@ -63,26 +62,23 @@ configured with two real databases:
   real stdio subprocess with the official MCP client SDK, not just called as plain Python
   functions.
 - **Phase 15/26 -- business metrics registry** (`dbagent/business/metric_service.py`) -- trusted,
-  versioned SQL definitions per database (`metrics.json`: `completed_widgets`,
-  `completed_order_total`, `payments_total`, `active_item_count`,
-  `payments_in_period` [date-ranged]). `compute_metric` renders and runs a metric's
-  template through the exact same `SqlValidator`/`ReadOnlyQueryService` pipeline as any other
-  query -- date parameters are validated against a strict `YYYY-MM-DD` pattern before
-  substitution. The agent checks `list_business_metrics` before writing raw SQL for a concept
-  that matches one, so "how many completed orders" always uses the same trusted definition
-  instead of the model re-deriving the filter per question. All five metrics verified against
-  independently-confirmed ground truth (`psql` queries run before the metrics were written).
+  versioned SQL definitions per database, optionally date-ranged (with strict `YYYY-MM-DD`
+  validation before substitution into the template). `compute_metric` renders and runs a
+  metric's template through the exact same `SqlValidator`/`ReadOnlyQueryService` pipeline as any
+  other query. The agent checks `list_business_metrics` before writing raw SQL for a concept
+  that matches one, so the same question always uses the same trusted definition instead of the
+  model re-deriving the filter per question. See `metrics.example.json` for the file shape.
 - **Per-database context notes** (`DatabaseProfile.context_path`, optional) -- a plain-text/
   markdown file of curated, *verified* schema facts appended to the agent's system prompt for
-  that database (`context.md`: real table/column names, FK targets, observed enum values,
-  explicit "there is no `order_records` table" callouts for names a model might guess). This is
-  additive, not a replacement for tool-based discovery -- it just gives the model a head start so
-  it doesn't need search_tables/get_table_schema for tables it already "knows" about, which
-  matters a lot for a 3B model prone to guessing plausible-sounding table names (observed live:
-  "give last 3 order records" hallucinated a `FROM order_records` query before this was added;
-  went straight to the correct `order_table` in one tool call after). Every fact in `context.md`
-  was checked against the live schema via `psql` before being written -- the agent's own core
-  "never invent" rules still apply, this only supplements them with things already confirmed true.
+  that database (real table/column names, FK targets, observed enum values, explicit "there is
+  no table called X" callouts for names a model might guess). This is additive, not a
+  replacement for tool-based discovery -- it just gives the model a head start so it doesn't
+  need search_tables/get_table_schema for tables it already "knows" about, which matters a lot
+  for a 3B model prone to guessing plausible-sounding table names (observed live: a "give me the
+  last 3 orders" question hallucinated a nonexistent table before this was added; went straight
+  to the correct table in one tool call after). See `context.example.md` for the file shape --
+  every fact in a real one should be checked against the live schema via `psql` before being
+  written, since the agent is told to trust it.
 
 Endpoints (all take `?database=<name>` or a `database` body field): `GET /api/databases` (lists
 configured names, no selector needed), `GET /api/schema`, `GET /api/schema/search`,
@@ -111,14 +107,14 @@ found and fixed by testing against it live, not just against unit tests:
   `execute_readonly_sql` call succeeds, the *next* turn omits tool definitions entirely, so the
   model has no choice but to answer in text (see `test_tools_are_withheld_after_successful_data_result`).
 - **That fix's own failure mode**: force-stopping on *any* success meant a wrong-but-valid metric
-  guess (e.g. computing `completed_widgets`, a count, for a *revenue* question, after guessing a
+  guess (e.g. computing a count when the question asked for a revenue total, after guessing a
   nonexistent metric name first) got force-stopped into a confidently wrong answer -- worse than
   the original bug, since a garbled loop became a plausible-sounding lie. Fixed with a one-time
   "grace round": the success immediately after a wrong-metric-name guess is *not* trusted, but
   the one after that is -- matching the guide's own "the agent may correct itself once, avoid
-  unlimited retries" principle (Phase 40). Verified live: the revenue question now correctly
-  self-corrects to `completed_order_total` ($239,267.19, exact ground-truth match) instead of
-  answering "32".
+  unlimited retries" principle (Phase 40). Verified live: a revenue question that previously
+  answered with the wrong (but real) count now correctly self-corrects to the right metric and
+  the exact ground-truth dollar figure.
 - **Stray-tool-call-as-text reaching the user as a fake "answer"**: when self-correction nudges
   ran out and the model was still emitting a tool call as JSON-shaped plain text, that raw text
   was returned as if it were the real answer. Fixed to return an honest failure
@@ -139,28 +135,26 @@ All of the above are locked in with unit tests using a scripted fake provider (d
 fast, no Ollama dependency) in `test_agent_service.py`, in addition to having been reproduced and
 re-verified live against the real model. The agent still doesn't force a correct outcome every
 time (e.g. a metric needing `start_date`/`end_date` can still stall on a multi-hop question, and
-the model can still mangle a field while writing its prose summary -- e.g. reporting "Customer
-ID: 1" for all three rows in a "last 3 orders" answer when the real `customer_id` values were
-UUIDs, even though the underlying data it pulled was correct), but it now fails honestly rather
-than confidently wrong or presenting garbled text. The
-validation/execution layers themselves are correct and safe regardless of what the model does or
-how it fails (verified independent of the LLM in `test_sql_validator.py` / `test_query_service.py`
-/ `test_sample_service.py` / `test_metric_service.py`). A larger tool-calling model (e.g.
-`llama3.1:8b`, `qwen2.5:7b`) would likely be more reliable end-to-end; not pulled yet due to
-limited local disk space (~5GB free). The MCP server sidesteps this entirely for MCP clients,
-since reasoning happens in the *calling* client's model, not `llama3.2`.
+the model can still mangle a field while writing its prose summary even when the underlying data
+it pulled was correct), but it now fails honestly rather than confidently wrong or presenting
+garbled text. The validation/execution layers themselves are correct and safe regardless of what
+the model does or how it fails (verified independent of the LLM in `test_sql_validator.py` /
+`test_query_service.py` / `test_sample_service.py` / `test_metric_service.py`). A larger
+tool-calling model (e.g. `llama3.1:8b`, `qwen2.5:7b`) would likely be more reliable end-to-end;
+not pulled yet due to limited local disk space. The MCP server sidesteps this entirely for MCP
+clients, since reasoning happens in the *calling* client's model, not `llama3.2`.
 
 Not yet implemented: embeddings/RAG (guide explicitly says these only become useful once a schema
-gets large -- my_case_db/my_store_db are still small enough for keyword search), multi-step analytics,
-charts/reports, audit trail, role-based access control, and everything past Milestone 8 in the
-guide.
+gets large -- both databases used in development are still small enough for keyword search),
+multi-step analytics, charts/reports, audit trail, role-based access control, and everything past
+Milestone 8 in the guide.
 
 ## Security notes
 
 - Each database's `ai_readonly` role has `SELECT` only, scoped to that database's configured
-  schemas. Credential/session/token tables are explicitly `REVOKE`d (`my_case_db`:
-  `user_credentials`, `oauth2_*`; `my_store_db`: `user_account_table` [has a `password` column],
-  `session_table`, `email_verification_token`).
+  schemas. Credential/session/token tables (e.g. an auth-credentials table, an OAuth token
+  table, a Django-style user table with a password column) should be explicitly `REVOKE`d --
+  see `databases.example.json` for the `excluded_tables` shape.
 - Postgres exposes table/column *metadata* to any role with schema `USAGE`, regardless of
   `SELECT` grants -- so those excluded tables are *also* filtered out at the app layer
   (`DatabaseProfile.excluded_tables` in `databases.json`, applied in `DatabaseSchemaService` and
@@ -174,7 +168,10 @@ guide.
 - No `ALTER DEFAULT PRIVILEGES` was set on any schema -- new tables added later need an explicit
   grant + exclusion-list review before the agent can see them.
 - `databases.json` holds real connection strings (with passwords) and is gitignored, same as
-  `.env`. `databases.example.json` is the checked-in template.
+  `.env`. `databases.example.json` is the checked-in template. Per-database business content
+  (`context_*.md`, `glossary_*.json`, `metrics_*.json` -- real schema/business facts about a
+  specific private database) is also gitignored by pattern; only the generic `*.example.*`
+  templates are committed. See `.gitignore` for the exact patterns.
 
 ## Setup
 
@@ -214,33 +211,35 @@ Add an entry to `databases.json`:
 `schemas`, `excluded_tables`, `glossary_path`, `metrics_path`, and `context_path` are all optional
 (default to `["public"]`, `[]`, no glossary, no metrics, and no extra context respectively).
 Create a dedicated read-only role on that database first (Phase 1 -- see the
-`CREATE USER ... SELECT only` pattern in the implementation guide), the same way `ai_readonly` was
-set up for `my_case_db` and `my_store_db`. Check what's actually in the schema before granting broadly --
-credential/session/token tables should be excluded the same way (`REVOKE` at the DB level +
-`excluded_tables` in the config). No restart-time code change is needed; the new name shows up in
-`GET /api/databases` and can be used immediately.
+`CREATE USER ... SELECT only` pattern in the implementation guide). Check what's actually in the
+schema before granting broadly -- credential/session/token tables should be excluded the same way
+(`REVOKE` at the DB level + `excluded_tables` in the config). No restart-time code change is
+needed; the new name shows up in `GET /api/databases` and can be used immediately.
 
-`context_path` points at a plain-text/markdown file of schema notes appended to that database's
-agent system prompt -- **only write facts you've actually verified against the live schema**
-(`psql`/`get_table_schema`), never guessed or copied from a similar-looking app. A wrong fact in
-here is worse than no context at all, since the agent is told to trust it. Keep it concise: table
-names, real column names, FK targets, and any observed enum-like values are far more useful than
-long prose or example queries -- a smaller model's attention degrades with prompt length, so the
-goal is a dense cheat-sheet, not documentation.
+`context_path`, `glossary_path`, and `metrics_path` files named `context_*.md` / `glossary_*.json`
+/ `metrics_*.json` are gitignored by pattern (see `.gitignore`) so real per-database business
+content never gets committed -- keep them locally, and only commit the generic `.example.`
+variants if you want to document the shape for others. `context_path` points at a plain-text/
+markdown file of schema notes appended to that database's agent system prompt --
+**only write facts you've actually verified against the live schema** (`psql`/`get_table_schema`),
+never guessed or copied from a similar-looking app. A wrong fact in here is worse than no context
+at all, since the agent is told to trust it. Keep it concise: table names, real column names, FK
+targets, and any observed enum-like values are far more useful than long prose or example queries
+-- a smaller model's attention degrades with prompt length, so the goal is a dense cheat-sheet,
+not documentation.
 
 ## Run
 
 Print the schema:
 
 ```bash
-python scripts/print_schema.py my_case_db
+python scripts/print_schema.py my_other_db
 ```
 
 Ask the agent a question:
 
 ```bash
-python scripts/ask_agent.py my_case_db "How many districts are there in total?"
-python scripts/ask_agent.py my_store_db "give me the first 5 records of product_table"
+python scripts/ask_agent.py my_other_db "How many records are there in total?"
 ```
 
 Run the API:
@@ -249,7 +248,7 @@ Run the API:
 uvicorn dbagent.api.main:app --reload --app-dir src
 ```
 
-Then `curl "http://localhost:8000/api/schema?database=my_case_db"`. Interactive docs at
+Then `curl "http://localhost:8000/api/schema?database=my_other_db"`. Interactive docs at
 `http://localhost:8000/docs`.
 
 Run the MCP server (stdio transport):
@@ -288,3 +287,9 @@ supplies its own reasoning.
 ```bash
 pytest
 ```
+
+The suite needs a local PostgreSQL instance reachable via the first entry in your (gitignored)
+`databases.json`, plus a superuser-capable local role (the OS user that initialized the Postgres
+install typically has this via peer/trust auth) -- it creates and tears down its own throwaway
+`agent_test_fixtures` schema with fabricated tables/data for every test, and never touches your
+real database's own tables.

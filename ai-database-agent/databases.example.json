@@ -1,15 +1,12 @@
 {
-  "my_case_db": {
-    "database_url": "postgresql+psycopg://ai_readonly:password@localhost:5432/my_case_db",
-    "schemas": ["my_case_db", "app_schema_dict"],
+  "my_case_management_db": {
+    "database_url": "postgresql+psycopg://ai_readonly:password@localhost:5432/my_case_management_db",
+    "schemas": ["app_schema", "app_schema_dict"],
     "excluded_tables": [
-      "my_case_db.user_credentials",
-      "my_case_db.oauth_authorization",
-      "my_case_db.oauth_consent",
-      "my_case_db.oauth_refresh_token",
-      "my_case_db.oauth_registered_client"
+      "app_schema.user_credentials",
+      "app_schema.oauth_tokens"
     ],
-    "glossary_path": "src/dbagent/business/glossary.json"
+    "glossary_path": "src/dbagent/business/glossary.example.json"
   },
   "my_store_db": {
     "database_url": "postgresql+psycopg://ai_readonly:password@localhost:5432/my_store_db",

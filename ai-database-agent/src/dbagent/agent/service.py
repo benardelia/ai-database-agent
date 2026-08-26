@@ -107,8 +107,8 @@ class AgentService:
         # core rules above (read-only, stop conditions, metric priority,
         # etc.) still apply; this only supplements them with concrete facts
         # about *this* database, which cuts down on a small model
-        # hallucinating table names (e.g. "order_records" instead of the
-        # real "order_table") instead of using search_tables/get_table_schema.
+        # hallucinating table names instead of using
+        # search_tables/get_table_schema.
         self._system_prompt = SYSTEM_PROMPT
         if database_context:
             self._system_prompt += (

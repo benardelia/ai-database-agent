@@ -5,8 +5,8 @@ from dbagent.services.schema_service import DatabaseSchemaService
 
 
 @pytest.fixture(scope="module")
-def schema_service(ilcms_db_connection: DatabaseConnection) -> DatabaseSchemaService:
-    return DatabaseSchemaService(ilcms_db_connection.engine)
+def schema_service(pg_test_connection: DatabaseConnection) -> DatabaseSchemaService:
+    return DatabaseSchemaService(pg_test_connection.engine)
 
 
 def test_find_relationships_for_table_with_no_foreign_keys(

@@ -62,12 +62,12 @@ def test_unparseable_sql_rejected(validator: SqlValidator):
 
 
 def test_excluded_table_rejected_even_for_valid_select():
-    validator = SqlValidator(excluded_tables={"my_case_db.user_credentials"})
+    validator = SqlValidator(excluded_tables={"myschema.secret_credential"})
     with pytest.raises(SqlValidationError, match="not permitted"):
-        validator.validate("SELECT * FROM my_case_db.user_credentials")
+        validator.validate("SELECT * FROM myschema.secret_credential")
 
 
 def test_non_excluded_table_still_allowed():
-    validator = SqlValidator(excluded_tables={"my_case_db.user_credentials"})
+    validator = SqlValidator(excluded_tables={"myschema.secret_credential"})
     result = validator.validate("SELECT * FROM spatial_ref_sys")
     assert "SELECT" in result.upper()

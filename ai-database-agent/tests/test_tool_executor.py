@@ -1,5 +1,4 @@
 import json
-from pathlib import Path
 
 import pytest
 
@@ -11,27 +10,50 @@ from dbagent.services.schema_service import DatabaseSchemaService
 from dbagent.services.search_service import SchemaSearchService
 from dbagent.services.sql_validator import SqlValidator
 
-ROOT = Path(__file__).resolve().parents[1]
-
 
 @pytest.fixture
-def executor(ilcms_db_connection: DatabaseConnection) -> ToolExecutor:
-    schema_service = DatabaseSchemaService(ilcms_db_connection.engine)
+def executor(pg_test_connection: DatabaseConnection) -> ToolExecutor:
+    schema_service = DatabaseSchemaService(pg_test_connection.engine)
     search_service = SchemaSearchService(schema_service)
     return ToolExecutor(schema_service, search_service)
 
 
 @pytest.fixture
-def sms_executor_with_metrics() -> ToolExecutor:
-    config = json.loads((ROOT / "databases.json").read_text())
-    sms_url = config["my_store_db"]["database_url"]
-    connection = DatabaseConnection(sms_url)
+def executor_with_metrics(
+    pg_test_connection: DatabaseConnection, synthetic_schema: str, tmp_path
+) -> ToolExecutor:
+    """A synthetic metrics registry over the fixture's widget/payment
+    tables -- mirrors the shape of a real metrics_path config without
+    depending on any real business metric definitions."""
+    metrics_file = tmp_path / "metrics.json"
+    metrics_file.write_text(
+        json.dumps(
+            [
+                {
+                    "name": "completed_widgets",
+                    "description": "Count of widgets whose status is Completed.",
+                    "sql": "SELECT COUNT(*) AS completed_widgets FROM widget WHERE status = 'Completed'",
+                },
+                {
+                    "name": "payments_in_period",
+                    "description": "Sum of successful payment amounts in [start_date, end_date).",
+                    "sql": (
+                        "SELECT SUM(amount) AS payments_in_period FROM payment "
+                        "WHERE status = 'Success' AND paid_at >= '{start_date}' "
+                        "AND paid_at < '{end_date}'"
+                    ),
+                },
+            ]
+        )
+    )
 
-    schema_service = DatabaseSchemaService(connection.engine, schemas=["public"])
+    schema_service = DatabaseSchemaService(pg_test_connection.engine, schemas=[synthetic_schema])
     search_service = SchemaSearchService(schema_service)
     sql_validator = SqlValidator()
-    query_service = ReadOnlyQueryService(connection.engine, sql_validator, search_path=["public"])
-    metric_service = MetricService(ROOT / "src/dbagent/business/metrics.json")
+    query_service = ReadOnlyQueryService(
+        pg_test_connection.engine, sql_validator, search_path=[synthetic_schema]
+    )
+    metric_service = MetricService(metrics_file)
 
     return ToolExecutor(
         schema_service,
@@ -88,50 +110,45 @@ def test_blank_argument_value_is_treated_as_missing(executor: ToolExecutor):
     assert "error" in result
 
 
-def test_list_business_metrics_returns_definitions(sms_executor_with_metrics: ToolExecutor):
-    result = sms_executor_with_metrics.execute("list_business_metrics", {})
+def test_list_business_metrics_returns_definitions(executor_with_metrics: ToolExecutor):
+    result = executor_with_metrics.execute("list_business_metrics", {})
     names = {m["name"] for m in result["metrics"]}
     assert "completed_widgets" in names
 
 
-def test_compute_metric_returns_real_verified_value(sms_executor_with_metrics: ToolExecutor):
-    """Ground truth confirmed independently via psql: 7 widgets with
-    status='Completed' in the live my_store_db database."""
-    result = sms_executor_with_metrics.execute("compute_metric", {"name": "completed_widgets"})
-    assert result["rows"] == [[7]]
+def test_compute_metric_returns_expected_value(executor_with_metrics: ToolExecutor):
+    """2 of the 3 fixture widgets have status='Completed' (see conftest.py)."""
+    result = executor_with_metrics.execute("compute_metric", {"name": "completed_widgets"})
+    assert result["rows"] == [[2]]
     assert result["metric"] == "completed_widgets"
 
 
-def test_compute_metric_with_period_returns_real_verified_value(
-    sms_executor_with_metrics: ToolExecutor,
-):
-    """Ground truth confirmed independently via psql: 1042.50 in
-    successful payments during April 2026."""
-    result = sms_executor_with_metrics.execute(
+def test_compute_metric_with_period_returns_expected_value(executor_with_metrics: ToolExecutor):
+    """Only one fixture payment (10.00, widget 1) is status='Success' and
+    falls in January 2025 -- the other January payment is status='Failed'."""
+    result = executor_with_metrics.execute(
         "compute_metric",
         {
             "name": "payments_in_period",
-            "start_date": "2026-04-01",
-            "end_date": "2026-05-01",
+            "start_date": "2025-01-01",
+            "end_date": "2025-02-01",
         },
     )
-    assert result["rows"] == [["1042.50"]]
+    assert result["rows"] == [["10.00"]]
 
 
-def test_compute_metric_unknown_name_returns_error(sms_executor_with_metrics: ToolExecutor):
-    result = sms_executor_with_metrics.execute("compute_metric", {"name": "not_a_real_metric"})
+def test_compute_metric_unknown_name_returns_error(executor_with_metrics: ToolExecutor):
+    result = executor_with_metrics.execute("compute_metric", {"name": "not_a_real_metric"})
     assert "error" in result
 
 
-def test_compute_metric_missing_dates_returns_error(sms_executor_with_metrics: ToolExecutor):
-    result = sms_executor_with_metrics.execute(
-        "compute_metric", {"name": "payments_in_period"}
-    )
+def test_compute_metric_missing_dates_returns_error(executor_with_metrics: ToolExecutor):
+    result = executor_with_metrics.execute("compute_metric", {"name": "payments_in_period"})
     assert "error" in result
 
 
 def test_metrics_unavailable_returns_empty_list(executor: ToolExecutor):
-    """The my_case_db-based `executor` fixture has no metric_service wired --
-    should degrade gracefully, not crash."""
+    """The plain `executor` fixture has no metric_service wired -- should
+    degrade gracefully, not crash."""
     result = executor.execute("list_business_metrics", {})
     assert result == {"metrics": []}

@@ -125,7 +125,7 @@ def test_tools_are_withheld_after_successful_data_result():
     provider = ScriptedProvider(
         [
             _tool_call_message("compute_metric", {"name": "completed_widgets"}),
-            _final_message("There are 7 completed widgets."),
+            _final_message("There are 7 completed orders."),
         ]
     )
     executor = FakeToolExecutor(results={"compute_metric": {"rows": [[7]], "metric": "completed_widgets"}})
@@ -133,7 +133,7 @@ def test_tools_are_withheld_after_successful_data_result():
 
     response = agent.ask("how many completed orders are there?")
 
-    assert response.answer == "There are 7 completed widgets."
+    assert response.answer == "There are 7 completed orders."
     assert response.stopped_reason == "completed"
     assert provider.tools_seen[0] is not None  # first call offered tools
     assert provider.tools_seen[1] is None  # forced no-tools after success
@@ -278,10 +278,10 @@ def test_database_context_is_appended_to_system_prompt():
     agent = AgentService(
         provider,
         executor,
-        database_context="There is no table called order_records -- orders are order_table.",
+        database_context="There is no table called widget_orders -- orders are order_table.",
     )
 
-    assert "order_records" in agent.system_prompt
+    assert "widget_orders" in agent.system_prompt
     assert "order_table" in agent.system_prompt
 
     agent.ask("something")
@@ -290,7 +290,7 @@ def test_database_context_is_appended_to_system_prompt():
     # actually gets sent to the provider as the system message.
     sent_system_message = provider.messages_seen[0][0]
     assert sent_system_message["role"] == "system"
-    assert "order_records" in sent_system_message["content"]
+    assert "widget_orders" in sent_system_message["content"]
 
 
 def test_without_database_context_prompt_is_unchanged():
