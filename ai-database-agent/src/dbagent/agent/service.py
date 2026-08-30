@@ -122,7 +122,14 @@ class AgentService:
     def system_prompt(self) -> str:
         return self._system_prompt
 
-    def ask(self, question: str) -> AgentResponse:
+    def ask(
+        self, question: str, session_variables: dict[str, str] | None = None
+    ) -> AgentResponse:
+        """session_variables (e.g. {"app.current_shop_id": "<uuid>"}) are
+        forwarded to every SQL-executing tool call made while answering
+        this one question -- a per-call parameter, not stored on self,
+        since this service instance is shared across concurrent requests
+        for different tenants (see ReadOnlyQueryService.execute)."""
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": self._system_prompt},
             {"role": "user", "content": question},
@@ -232,7 +239,9 @@ class AgentService:
                 tool_name = function.get("name", "")
                 arguments = function.get("arguments", {}) or {}
 
-                result = self._tool_executor.execute(tool_name, arguments)
+                result = self._tool_executor.execute(
+                    tool_name, arguments, session_variables=session_variables
+                )
                 tool_calls_made += 1
 
                 if tool_name == "compute_metric":

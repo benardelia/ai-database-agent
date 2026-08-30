@@ -194,9 +194,14 @@ class ToolExecutor:
         self._sample_service = sample_service
         self._metric_service = metric_service
 
-    def execute(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    def execute(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        session_variables: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
         try:
-            return self._dispatch(tool_name, arguments)
+            return self._dispatch(tool_name, arguments, session_variables)
         except KeyError as exc:
             return {
                 "error": (
@@ -205,7 +210,12 @@ class ToolExecutor:
                 )
             }
 
-    def _dispatch(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    def _dispatch(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        session_variables: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
         if tool_name == "search_tables":
             query = _get_arg(arguments, "query", "search_query", "term", "keyword")
             results = self._search_service.search_tables(query)
@@ -230,7 +240,7 @@ class ToolExecutor:
             limit = arguments.get("limit") or 10
             try:
                 result, excluded_columns = self._sample_service.get_sample_rows(
-                    table_name, limit=limit
+                    table_name, limit=limit, session_variables=session_variables
                 )
                 return {
                     "columns": result.columns,
@@ -256,7 +266,7 @@ class ToolExecutor:
             except MetricError as exc:
                 return {"error": str(exc)}
             try:
-                result = self._query_service.execute(sql)
+                result = self._query_service.execute(sql, session_variables=session_variables)
             except (SqlValidationError, QueryExecutionError) as exc:
                 return {"error": str(exc)}
             metric = self._metric_service.get_metric(metric_name)
@@ -281,7 +291,7 @@ class ToolExecutor:
                 return {"error": "SQL execution is not available."}
             sql = _get_arg(arguments, "sql", "query", "statement")
             try:
-                result = self._query_service.execute(sql)
+                result = self._query_service.execute(sql, session_variables=session_variables)
                 return result.model_dump()
             except (SqlValidationError, QueryExecutionError) as exc:
                 return {"error": str(exc)}

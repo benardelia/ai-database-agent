@@ -1,0 +1,33 @@
+services:
+  ai-database-agent:
+    build: .
+    # Whole-directory bind mount (matches the store project's own `web`
+    # service pattern) rather than relying only on the image's baked-in
+    # code -- this is also how databases.json and the real per-database
+    # business content (context_*.md / glossary_*.json / metrics_*.json,
+    # all gitignored) reach the container: they live on the host at these
+    # same paths and are never part of the image itself.
+    volumes:
+      - .:/app
+    env_file: .env
+    expose:
+      - "8005"
+    # No host port mapping -- this service is only ever called by other
+    # containers on proxy-network (e.g. the store app's `web` container),
+    # not exposed directly to the internet.
+    networks:
+      - proxy-network
+    extra_hosts:
+      # Lets OLLAMA_HOST=http://host.docker.internal:11434 reach an Ollama
+      # instance running on the host machine itself, on Linux too (Docker
+      # Desktop on Mac/Windows already provides this without the extra_hosts
+      # entry, but it's harmless there).
+      - "host.docker.internal:host-gateway"
+    # Uses the image's own CMD (uvicorn ...). Rebuild the image
+    # (`docker compose build`) after changing requirements.txt -- the bind
+    # mount overrides the code, not the installed packages.
+
+networks:
+  proxy-network:
+    external: true
+    name: global-proxy-network

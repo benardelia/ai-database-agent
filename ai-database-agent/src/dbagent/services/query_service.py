@@ -1,3 +1,4 @@
+import re
 import time
 from datetime import date, datetime
 from decimal import Decimal
@@ -13,6 +14,13 @@ from dbagent.services.sql_validator import SqlValidator
 
 class QueryExecutionError(Exception):
     pass
+
+
+# Postgres session variable ("GUC") names accepted from session_variables.
+# Restricted to the "app." custom namespace so a caller can never touch a
+# real Postgres setting (statement_timeout, search_path, etc.) through this
+# path -- only application-defined values consumed by RLS policies.
+_SESSION_VARIABLE_NAME_PATTERN = re.compile(r"^app\.[a-zA-Z_][a-zA-Z0-9_]*$")
 
 
 class QueryResult(BaseModel):
@@ -66,8 +74,18 @@ class ReadOnlyQueryService:
             else None
         )
 
-    def execute(self, sql: str) -> QueryResult:
+    def execute(
+        self, sql: str, session_variables: dict[str, str] | None = None
+    ) -> QueryResult:
         validated_sql = self._validator.validate(sql)
+
+        for name in session_variables or {}:
+            if not _SESSION_VARIABLE_NAME_PATTERN.match(name):
+                raise QueryExecutionError(
+                    f"Invalid session variable name '{name}': must match "
+                    f"{_SESSION_VARIABLE_NAME_PATTERN.pattern} (the 'app.' "
+                    "namespace, reserved for values consumed by RLS policies)."
+                )
 
         start = time.perf_counter()
         try:
@@ -79,6 +97,15 @@ class ReadOnlyQueryService:
                         text(f"SET LOCAL statement_timeout = {self._statement_timeout_ms}")
                     )
                     conn.execute(text("SET TRANSACTION READ ONLY"))
+                    # set_config(..., is_local=true) is transaction-scoped
+                    # and auto-resets at commit/rollback -- values are bind
+                    # parameters here (not interpolated), so this is safe
+                    # regardless of what the value itself contains.
+                    for name, value in (session_variables or {}).items():
+                        conn.execute(
+                            text("SELECT set_config(:name, :value, true)"),
+                            {"name": name, "value": value},
+                        )
                     result = conn.execute(text(validated_sql))
 
                     columns = list(result.keys())

@@ -14,9 +14,16 @@ class FakeToolExecutor:
         self.calls: list[tuple[str, dict]] = []
         self._results = results or {}
         self._call_counts: dict[str, int] = {}
+        self.last_session_variables: dict[str, str] | None = None
 
-    def execute(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    def execute(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        session_variables: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
         self.calls.append((tool_name, arguments))
+        self.last_session_variables = session_variables
         if tool_name not in self._results:
             return {"table": arguments.get("table", ""), "columns": ["id", "name"]}
 
@@ -299,3 +306,37 @@ def test_without_database_context_prompt_is_unchanged():
     agent = AgentService(provider, executor)
 
     assert agent.system_prompt == SYSTEM_PROMPT
+
+
+def test_session_variables_are_forwarded_to_every_tool_call():
+    """Regression test for tenant/row-level scoping (e.g. Postgres RLS by
+    shop_id): session_variables passed to ask() must reach every tool call
+    made while answering that question, since it's the mechanism that
+    keeps one tenant's query from seeing another's rows."""
+    provider = ScriptedProvider(
+        [
+            _tool_call_message("get_table_schema", {"table": "widget"}),
+            _final_message("done"),
+        ]
+    )
+    executor = FakeToolExecutor()
+    agent = AgentService(provider, executor)
+
+    agent.ask("what columns does widget have?", session_variables={"app.current_shop_id": "abc-123"})
+
+    assert executor.last_session_variables == {"app.current_shop_id": "abc-123"}
+
+
+def test_session_variables_default_to_none():
+    provider = ScriptedProvider(
+        [
+            _tool_call_message("get_table_schema", {"table": "widget"}),
+            _final_message("done"),
+        ]
+    )
+    executor = FakeToolExecutor()
+    agent = AgentService(provider, executor)
+
+    agent.ask("what columns does widget have?")
+
+    assert executor.last_session_variables is None

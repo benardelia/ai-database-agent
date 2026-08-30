@@ -29,7 +29,12 @@ class SampleDataService:
         self._schema_service = schema_service
         self._query_service = query_service
 
-    def get_sample_rows(self, table_name: str, limit: int = 10) -> tuple[QueryResult, list[str]]:
+    def get_sample_rows(
+        self,
+        table_name: str,
+        limit: int = 10,
+        session_variables: dict[str, str] | None = None,
+    ) -> tuple[QueryResult, list[str]]:
         table = self._schema_service.get_table(table_name)
         if table is None:
             raise SampleDataError(f"Table '{table_name}' was not found in the schema.")
@@ -45,5 +50,5 @@ class SampleDataService:
         column_list = ", ".join(f'"{c}"' for c in safe_columns)
         sql = f'SELECT {column_list} FROM "{table.schema_name}"."{table.name}" LIMIT {int(limit)}'
 
-        result = self._query_service.execute(sql)
+        result = self._query_service.execute(sql, session_variables=session_variables)
         return result, excluded_columns

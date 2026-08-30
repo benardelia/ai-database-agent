@@ -282,6 +282,22 @@ Once connected, the client's own model can call `list_databases`, `search_tables
 `execute_readonly_sql` directly -- no Ollama dependency for that path, since the calling client
 supplies its own reasoning.
 
+## Docker
+
+```bash
+docker compose build
+docker compose up -d
+```
+
+Serves on container-internal port 8005 (`docker-compose.yml`'s `expose`, not published to the
+host -- only reachable by other containers on the same Docker network). Joins the external
+`proxy-network` (`global-proxy-network`), so any other service on that network can reach it at
+`http://ai-database-agent:8005`. `databases.json` and any per-database business content
+(`context_*.md` / `glossary_*.json` / `metrics_*.json`) are bind-mounted from the host, never
+baked into the image -- put them on the server the same way you do locally. If Ollama runs on
+the host machine rather than in a container, set `OLLAMA_HOST=http://host.docker.internal:11434`
+in `.env` (works on Linux too here, via the `extra_hosts` entry in `docker-compose.yml`).
+
 ## Test
 
 ```bash

@@ -89,14 +89,23 @@ def find_relationships(database: str, table: str) -> list[dict[str, Any]] | dict
 
 
 @mcp.tool()
-def get_sample_rows(database: str, table: str, limit: int = 10) -> dict[str, Any]:
+def get_sample_rows(
+    database: str,
+    table: str,
+    limit: int = 10,
+    session_variables: dict[str, str] | None = None,
+) -> dict[str, Any]:
     """Return a few example rows from a table so you can see what its values look like.
-    Sensitive-looking columns (passwords, tokens, card numbers, etc.) are never included."""
+    Sensitive-looking columns (passwords, tokens, card numbers, etc.) are never included.
+    session_variables (e.g. {"app.current_shop_id": "<uuid>"}) are applied for Postgres
+    RLS policies, if the target database has any configured."""
     bundle = _bundle(database)
     if bundle is None:
         return _unknown_database_error(database)
     try:
-        result, excluded_columns = bundle.sample_service.get_sample_rows(table, limit=limit)
+        result, excluded_columns = bundle.sample_service.get_sample_rows(
+            table, limit=limit, session_variables=session_variables
+        )
     except SampleDataError as exc:
         return {"error": str(exc)}
     return {
@@ -120,11 +129,17 @@ def list_business_metrics(database: str) -> dict[str, Any]:
 
 @mcp.tool()
 def compute_metric(
-    database: str, name: str, start_date: str | None = None, end_date: str | None = None
+    database: str,
+    name: str,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    session_variables: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Compute a trusted business metric by name (from list_business_metrics)
     and return the real result. Some metrics need start_date/end_date
-    (YYYY-MM-DD); list_business_metrics tells you which."""
+    (YYYY-MM-DD); list_business_metrics tells you which. session_variables
+    (e.g. {"app.current_shop_id": "<uuid>"}) are applied for Postgres RLS
+    policies, if the target database has any configured."""
     bundle = _bundle(database)
     if bundle is None:
         return _unknown_database_error(database)
@@ -133,7 +148,7 @@ def compute_metric(
     except MetricError as exc:
         return {"error": str(exc)}
     try:
-        result = bundle.query_service.execute(sql)
+        result = bundle.query_service.execute(sql, session_variables=session_variables)
     except (SqlValidationError, QueryExecutionError) as exc:
         return {"error": str(exc)}
     metric = bundle.metric_service.get_metric(name)
@@ -154,13 +169,17 @@ def validate_sql(database: str, sql: str) -> dict[str, Any]:
 
 
 @mcp.tool()
-def execute_readonly_sql(database: str, sql: str) -> dict[str, Any]:
-    """Execute a validated read-only SELECT statement and return the result rows."""
+def execute_readonly_sql(
+    database: str, sql: str, session_variables: dict[str, str] | None = None
+) -> dict[str, Any]:
+    """Execute a validated read-only SELECT statement and return the result rows.
+    session_variables (e.g. {"app.current_shop_id": "<uuid>"}) are applied for
+    Postgres RLS policies, if the target database has any configured."""
     bundle = _bundle(database)
     if bundle is None:
         return _unknown_database_error(database)
     try:
-        result = bundle.query_service.execute(sql)
+        result = bundle.query_service.execute(sql, session_variables=session_variables)
         return result.model_dump()
     except (SqlValidationError, QueryExecutionError) as exc:
         return {"error": str(exc)}
