@@ -56,7 +56,14 @@ def synthetic_schema(pg_test_connection: DatabaseConnection) -> str:
         port=base_url.port,
         database=base_url.database,
     )
-    superuser = DatabaseConnection(str(superuser_url))
+    # NOT str(superuser_url) -- SQLAlchemy's URL.__str__ redacts the
+    # password (renders literal "***"), which silently "worked" locally
+    # because local Postgres uses trust/peer auth that ignores the
+    # password entirely, but fails hard anywhere password auth is actually
+    # enforced (e.g. CI's postgres service container: "password
+    # authentication failed"). render_as_string(hide_password=False) keeps
+    # the real password.
+    superuser = DatabaseConnection(superuser_url.render_as_string(hide_password=False))
 
     with superuser.engine.begin() as conn:
         conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {FIXTURE_SCHEMA}"))
