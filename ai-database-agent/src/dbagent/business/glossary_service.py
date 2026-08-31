@@ -6,6 +6,7 @@ DEFAULT_GLOSSARY_PATH = Path(__file__).with_name("glossary.json")
 
 class BusinessTermService:
     """Maps user/business terminology to database terminology.
+    
 
     Database naming does not always match the words a user would use in a
     question (e.g. "owner" -> right_holder). This is a thin, file-backed
