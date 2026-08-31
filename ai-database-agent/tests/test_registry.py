@@ -22,7 +22,7 @@ def test_missing_config_file_raises_clear_error(tmp_path):
 
 
 def test_unknown_database_name_raises_with_available_list(tmp_path, pg_test_connection):
-    url = str(pg_test_connection.engine.url)
+    url = pg_test_connection.engine.url.render_as_string(hide_password=False)
     config_path = _write_config(tmp_path, {"testdb": {"database_url": url}})
     registry = DatabaseRegistry(config_path, FakeProvider())
 
@@ -31,7 +31,7 @@ def test_unknown_database_name_raises_with_available_list(tmp_path, pg_test_conn
 
 
 def test_list_databases_returns_configured_names(tmp_path, pg_test_connection):
-    url = str(pg_test_connection.engine.url)
+    url = pg_test_connection.engine.url.render_as_string(hide_password=False)
     config_path = _write_config(
         tmp_path, {"testdb": {"database_url": url}, "other": {"database_url": url}}
     )
@@ -41,7 +41,7 @@ def test_list_databases_returns_configured_names(tmp_path, pg_test_connection):
 
 
 def test_bundle_is_cached_across_get_calls(tmp_path, pg_test_connection):
-    url = str(pg_test_connection.engine.url)
+    url = pg_test_connection.engine.url.render_as_string(hide_password=False)
     config_path = _write_config(tmp_path, {"testdb": {"database_url": url}})
     registry = DatabaseRegistry(config_path, FakeProvider())
 
@@ -55,7 +55,7 @@ def test_each_database_gets_its_own_schema_scope(tmp_path, pg_test_connection, s
     """Two entries pointing at the same physical database but different
     schemas/exclusions must not leak into each other -- this is the crux
     of what makes the agent usable for more than one database."""
-    url = str(pg_test_connection.engine.url)
+    url = pg_test_connection.engine.url.render_as_string(hide_password=False)
     config_path = _write_config(
         tmp_path,
         {
@@ -84,7 +84,7 @@ def test_context_path_is_loaded_and_appended_to_agent_system_prompt(tmp_path, pg
     context_file = tmp_path / "context.md"
     context_file.write_text("There is no table called widgets -- use widget.")
 
-    url = str(pg_test_connection.engine.url)
+    url = pg_test_connection.engine.url.render_as_string(hide_password=False)
     config_path = _write_config(
         tmp_path, {"testdb": {"database_url": url, "context_path": "context.md"}}
     )
@@ -99,7 +99,7 @@ def test_context_path_is_loaded_and_appended_to_agent_system_prompt(tmp_path, pg
 def test_missing_context_path_leaves_prompt_unchanged(tmp_path, pg_test_connection):
     from dbagent.agent.service import SYSTEM_PROMPT
 
-    url = str(pg_test_connection.engine.url)
+    url = pg_test_connection.engine.url.render_as_string(hide_password=False)
     config_path = _write_config(tmp_path, {"testdb": {"database_url": url}})
     registry = DatabaseRegistry(config_path, FakeProvider())
 

@@ -20,7 +20,7 @@ def synthetic_registry(monkeypatch, tmp_path, pg_test_connection, synthetic_sche
     in mcp_server.py look up `_registry` by name at call time, so
     monkeypatching this module attribute is enough; no production code
     needs to change for testability."""
-    url = str(pg_test_connection.engine.url)
+    url = pg_test_connection.engine.url.render_as_string(hide_password=False)
     metrics_file = tmp_path / "metrics.json"
     metrics_file.write_text(
         json.dumps(
