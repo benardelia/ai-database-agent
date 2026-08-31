@@ -298,6 +298,126 @@ baked into the image -- put them on the server the same way you do locally. If O
 the host machine rather than in a container, set `OLLAMA_HOST=http://host.docker.internal:11434`
 in `.env` (works on Linux too here, via the `extra_hosts` entry in `docker-compose.yml`).
 
+### First deploy on a new server
+
+A handful of things trip people up the first time this runs against a fresh VPS. All of them
+came up doing the actual first deployment, so they're captured here rather than left as tribal
+knowledge.
+
+**`.env` and `databases.json` must be created manually before the first `docker compose up`.**
+Both are gitignored on purpose (they hold real credentials), so `deploy.yml`'s `git reset --hard`
+never touches them and never creates them either -- `docker compose up -d --build` will fail with
+`env file ... .env not found` until you `scp`/paste them onto the server yourself, once, in
+`/var/www/ai-database-agent/ai-database-agent/`. Same directory the repo's `.env.example` and
+this README live in.
+
+**Container names are auto-generated -- don't guess them.** Docker Compose names containers
+`<project-directory-name>-<service-name>-<number>` (e.g. `advanced-store-management-system-db-1`),
+not the bare service name from the compose file. If a command like
+`docker exec -it db psql ...` fails because "there is no db container", run `docker ps` and copy
+the real name from there.
+
+**Find the target database's actual superuser role name before creating `ai_readonly`.** Don't
+assume it's `postgres` -- a Django (or other) app's Postgres container is usually initialized with
+whatever `POSTGRES_USER`/`DB_USER` that app's own `.env` sets, and connecting as literal
+`postgres` will fail with `role "postgres" does not exist` if that's not it. Check the *other*
+project's env file first, e.g.:
+
+```bash
+cat /var/www/<other-project>/.env | grep -i DB_USER
+docker exec -it <real-container-name> psql -U <that-value> -d <dbname>
+```
+
+Then create the read-only role and grant it access, e.g.:
+
+```sql
+CREATE USER ai_readonly WITH PASSWORD '<strong-password>';
+GRANT CONNECT ON DATABASE <dbname> TO ai_readonly;
+GRANT USAGE ON SCHEMA public TO ai_readonly;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO ai_readonly;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO ai_readonly;
+```
+
+**Reaching another project's database: prefer `host.docker.internal` over a shared network alias
+if that database is already exposed on a host port.** Two ways to let this container reach
+another app's Postgres running in its own compose stack:
+
+- If the other stack already publishes Postgres to the host (check its compose file for a
+  `ports:` entry, e.g. `5431:5432`), just point `databases.json` at
+  `host.docker.internal:<that-host-port>` -- no changes to the other project needed at all. This
+  is what's actually used in production here.
+- Otherwise, you'd need to add this container's network to the other stack's `db` service (e.g. an
+  alias on `global-proxy-network`) and redeploy *that* project too -- more moving parts, only worth
+  it if the DB isn't already host-exposed.
+
+Either way, this only ever reads through the dedicated `ai_readonly` role over a real network/socket
+connection -- it does not require sharing a Docker network with the target app.
+
+**Ollama runs on the host OS, not in a container, and not on your dev machine.** The agent talks
+to Ollama over HTTP (`OLLAMA_HOST` in `.env`), so it must be installed and running on the *deploy
+server* itself:
+
+```bash
+curl -fsSL https://ollama.com/install.sh | sh
+systemctl enable --now ollama
+ollama pull llama3.2
+```
+
+Before doing this on a shared VPS, sanity-check available resources (`free -h`, `nproc`, `df -h`).
+If swap is `0B`, add a swap file first as an OOM safety net -- a 3B-class model plus whatever else
+runs on the box can spike memory under load:
+
+```bash
+fallocate -l 2G /swapfile && chmod 600 /swapfile
+mkswap /swapfile && swapon /swapfile
+echo '/swapfile none swap sw 0 0' >> /etc/fstab
+```
+
+To switch models later: `ollama pull <new-model>` works anytime and doesn't require touching
+Docker. Then update `OLLAMA_MODEL` in `.env` and run `docker compose up -d` (no `--build` needed,
+just a container restart to pick up the new env value). `ollama rm <old-model>` afterward reclaims
+disk space once you've confirmed the new one works.
+
+**Ollama defaults to binding `127.0.0.1` only -- the container can't reach it until you rebind
+it.** By default Ollama listens only on localhost, which never accepts connections from Docker's
+bridge network, so `host.docker.internal:11434` from inside the container gets connection refused
+even though Ollama is running fine. Fix it by overriding the systemd unit:
+
+```bash
+sudo mkdir -p /etc/systemd/system/ollama.service.d
+sudo tee /etc/systemd/system/ollama.service.d/override.conf > /dev/null <<'EOF'
+[Service]
+Environment="OLLAMA_HOST=0.0.0.0:11434"
+EOF
+sudo systemctl daemon-reload
+sudo systemctl restart ollama
+```
+
+(Don't use `sudo systemctl edit ollama` for this if you're not comfortable in the interactive
+editor it opens -- exiting without entering insert mode/typing anything just silently cancels
+with "temporary file is empty". Writing the override file directly with `tee`, as above, avoids
+that entirely.)
+
+Verify it's listening on all interfaces afterward:
+
+```bash
+ss -tlnp | grep 11434   # expect 0.0.0.0:11434, not 127.0.0.1:11434
+```
+
+Binding to `0.0.0.0` opens the port on every interface, not just the Docker bridge -- if the
+server has a public IP, confirm `ufw`/`iptables` blocks external access to 11434 so Ollama isn't
+reachable from the internet.
+
+To test connectivity from inside the container without `curl` (not installed in the
+`python:3.12-slim` image this project builds from), use Python, which is already there:
+
+```bash
+docker exec -it <ai-database-agent-container-name> python -c \
+  "import urllib.request; print(urllib.request.urlopen('http://host.docker.internal:11434').read())"
+```
+
+Expect `b'Ollama is running'`.
+
 ## Test
 
 ```bash
