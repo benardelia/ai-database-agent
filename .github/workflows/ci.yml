@@ -49,11 +49,20 @@ jobs:
           pip install -r requirements.txt
 
       - name: "Create ai_readonly role (Phase 1: dedicated read-only DB user)"
+        # Made a superuser here ONLY -- this is a throwaway, fully
+        # ephemeral CI database with no real security boundary to
+        # preserve, unlike a real deployment's ai_readonly (which stays
+        # strictly read-only there). This also lets tests/conftest.py's
+        # synthetic_schema fixture reuse these same credentials for its
+        # CREATE SCHEMA/TABLE needs instead of depending on the postgres
+        # superuser working from Python the same way it does from psql,
+        # which -- for reasons not fully pinned down -- it didn't in this
+        # image/environment (see the "Run tests" step below).
         env:
           PGPASSWORD: postgres
         run: |
           psql -h localhost -U postgres -d agent_ci -v ON_ERROR_STOP=1 <<'SQL'
-          CREATE USER ai_readonly WITH PASSWORD 'ai_readonly';
+          CREATE USER ai_readonly WITH PASSWORD 'ai_readonly' SUPERUSER;
           GRANT CONNECT ON DATABASE agent_ci TO ai_readonly;
           GRANT USAGE ON SCHEMA public TO ai_readonly;
           GRANT SELECT ON ALL TABLES IN SCHEMA public TO ai_readonly;
@@ -76,11 +85,15 @@ jobs:
       - name: Run tests
         env:
           # tests/conftest.py's synthetic_schema fixture needs a real
-          # Postgres superuser to CREATE SCHEMA/TABLE -- locally that's the
-          # OS user via peer/trust auth, in CI it's the service's own
-          # postgres superuser instead.
-          TEST_SUPERUSER: postgres
-          TEST_SUPERUSER_PASSWORD: postgres
+          # Postgres superuser to CREATE SCHEMA/TABLE. Locally that's the
+          # OS user via peer/trust auth. In CI, ai_readonly was granted
+          # SUPERUSER above specifically so these can be the same,
+          # already-proven-working credentials the rest of the suite uses
+          # (pg_test_connection) rather than a second set (postgres/postgres)
+          # that connects fine via psql but not from Python in this
+          # image/environment.
+          TEST_SUPERUSER: ai_readonly
+          TEST_SUPERUSER_PASSWORD: ai_readonly
         run: pytest -q
 
   docker-build:
