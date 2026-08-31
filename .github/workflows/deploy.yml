@@ -1,0 +1,48 @@
+name: Deploy AI Database Agent to VPS
+
+on:
+  push:
+    branches: ["main"]
+  # Lets you trigger a deploy manually from the Actions tab without a new
+  # commit -- useful the first time, before secrets below are confirmed
+  # working, or to redeploy after only changing something on the server.
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to VPS via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        with:
+          host: ${{ secrets.AI_AGENT_VPS_HOST }}
+          username: ${{ secrets.AI_AGENT_VPS_USERNAME }}
+          key: ${{ secrets.AI_AGENT_VPS_SSH_KEY }}
+          envs: GITHUB_TOKEN,GITHUB_ACTOR,GITHUB_REPOSITORY
+          script: |
+            # 1. Navigate to where this repo is cloned on the server.
+            #    Same repo root as the "ai-database-agent" project, but the
+            #    actual code (Dockerfile, docker-compose.yml) lives one
+            #    level down in ai-database-agent/.
+            cd /var/www/ai-database-agent
+
+            # 2. Fetch the latest code and force the server to match GitHub
+            #    exactly. This does NOT touch databases.json, .env, or the
+            #    per-database business content (context_*.md /
+            #    glossary_*.json / metrics_*.json) -- all gitignored, so
+            #    `git reset --hard` leaves them alone. They must already
+            #    exist on the server (copy them there once, manually,
+            #    before the first deploy -- see ai-database-agent/README.md).
+            git fetch https://${GITHUB_ACTOR}:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git main
+            git reset --hard FETCH_HEAD
+
+            # 3. Rebuild and restart the container. global-proxy-network
+            #    must already exist on the server (created by whatever
+            #    stack runs nginx-proxy) -- see the "Docker" section of
+            #    ai-database-agent/README.md.
+            cd ai-database-agent
+            docker compose up -d --build

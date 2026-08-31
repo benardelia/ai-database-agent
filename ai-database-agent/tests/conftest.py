@@ -1,5 +1,6 @@
 import getpass
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -42,9 +43,15 @@ def synthetic_schema(pg_test_connection: DatabaseConnection) -> str:
     built once, reused, dropped at the end of the run.
     """
     base_url = pg_test_connection.engine.url
+    # Locally, the OS user that initialized Postgres is typically a
+    # superuser reachable via peer/trust auth (no password) -- that's the
+    # default. CI (e.g. GitHub Actions' postgres service container) has no
+    # such OS-user mapping, so TEST_SUPERUSER/TEST_SUPERUSER_PASSWORD let
+    # the workflow point this at the service's actual superuser instead.
     superuser_url = URL.create(
         drivername=base_url.drivername,
-        username=getpass.getuser(),
+        username=os.environ.get("TEST_SUPERUSER", getpass.getuser()),
+        password=os.environ.get("TEST_SUPERUSER_PASSWORD"),
         host=base_url.host,
         port=base_url.port,
         database=base_url.database,

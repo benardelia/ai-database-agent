@@ -1,0 +1,96 @@
+name: AI Database Agent CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+defaults:
+  run:
+    # This repo is rooted here, but the actual project (and its tests)
+    # lives in the ai-database-agent/ subdirectory.
+    working-directory: ai-database-agent
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        # Plain postgres:15 isn't enough -- several tests exercise real
+        # PostGIS system tables (public.spatial_ref_sys / geometry_columns)
+        # as a stand-in "already there" schema alongside the fully
+        # synthetic one the suite creates itself (see tests/conftest.py).
+        image: postgis/postgis:15-3.4
+        env:
+          POSTGRES_DB: agent_ci
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: "Create ai_readonly role (Phase 1: dedicated read-only DB user)"
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -d agent_ci -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE USER ai_readonly WITH PASSWORD 'ai_readonly';
+          GRANT CONNECT ON DATABASE agent_ci TO ai_readonly;
+          GRANT USAGE ON SCHEMA public TO ai_readonly;
+          GRANT SELECT ON ALL TABLES IN SCHEMA public TO ai_readonly;
+          ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO ai_readonly;
+          SQL
+
+      - name: Write CI-only databases.json
+        # Gitignored locally (holds real secrets there); here it's just a
+        # throwaway pointer at the CI postgres service, never committed.
+        run: |
+          cat > databases.json <<'JSON'
+          {
+            "ci_test_db": {
+              "database_url": "postgresql+psycopg://ai_readonly:ai_readonly@localhost:5432/agent_ci",
+              "schemas": ["public"]
+            }
+          }
+          JSON
+
+      - name: Run tests
+        env:
+          # tests/conftest.py's synthetic_schema fixture needs a real
+          # Postgres superuser to CREATE SCHEMA/TABLE -- locally that's the
+          # OS user via peer/trust auth, in CI it's the service's own
+          # postgres superuser instead.
+          TEST_SUPERUSER: postgres
+          TEST_SUPERUSER_PASSWORD: postgres
+        run: pytest -q
+
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image (no push -- just confirms the Dockerfile still builds)
+        uses: docker/build-push-action@v6
+        with:
+          context: ai-database-agent
+          push: false
+          tags: ai-database-agent:ci
