@@ -30,7 +30,14 @@ class SchemaSearchService:
     def search_tables(self, query: str, limit: int = 20) -> list[TableSearchResult]:
         search_terms = self._glossary_service.expand(query)
         search_terms.extend(_tokenize(query))
-        search_terms = {t for t in search_terms if t}
+        tokens = {t for t in search_terms if t}
+        # Naive substring scoring otherwise misses constantly on a plain
+        # plural/singular mismatch -- e.g. query "products" never matching a
+        # table literally named "product" (observed live: search_tables
+        # silently dropped the real product table and scored an unrelated
+        # table higher purely because it had a "max_products" column).
+        singular_forms = {t[:-1] for t in tokens if t.endswith("s") and len(t) > 3}
+        search_terms = tokens | singular_forms
 
         schema = self._schema_service.get_schema()
         results: list[TableSearchResult] = []
