@@ -1,9 +1,13 @@
 import json
+import logging
+import time
 from typing import Any
 
 from dbagent.agent.models import AgentResponse, AgentStep
 from dbagent.ai.provider import LLMProvider, LLMProviderError
 from dbagent.ai.tools import AGENT_TOOLS, TOOL_NAMES, ToolExecutor
+
+logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """You are a database reasoning assistant.
 
@@ -96,12 +100,17 @@ class AgentService:
         max_tool_calls: int = 15,
         max_nudges: int = 3,
         database_context: str | None = None,
+        database_name: str | None = None,
     ):
         self._provider = provider
         self._tool_executor = tool_executor
         self._max_steps = max_steps
         self._max_tool_calls = max_tool_calls
         self._max_nudges = max_nudges
+        # Only for log-line labeling ("[sms] tool_call=...") so a busy
+        # multi-database log stream stays attributable -- not used for any
+        # behavioral branching.
+        self._database_name = database_name or "?"
         # Optional, per-database schema/domain notes (see
         # DatabaseProfile.context_path). Additive, not a replacement -- the
         # core rules above (read-only, stop conditions, metric priority,
@@ -129,7 +138,28 @@ class AgentService:
         forwarded to every SQL-executing tool call made while answering
         this one question -- a per-call parameter, not stored on self,
         since this service instance is shared across concurrent requests
-        for different tenants (see ReadOnlyQueryService.execute)."""
+        for different tenants (see ReadOnlyQueryService.execute).
+
+        Logs the start, every tool call taken, and the outcome -- otherwise
+        the only visible trace of a request is the final HTTP access log
+        line, with no way to see what the agent actually did to get there.
+        """
+        started = time.monotonic()
+        logger.info("[%s] question=%r", self._database_name, question)
+        response = self._run(question, session_variables)
+        elapsed = time.monotonic() - started
+        logger.info(
+            "[%s] done in %.2fs tool_calls=%d stopped_reason=%s",
+            self._database_name,
+            elapsed,
+            len(response.steps),
+            response.stopped_reason or "answered",
+        )
+        return response
+
+    def _run(
+        self, question: str, session_variables: dict[str, str] | None = None
+    ) -> AgentResponse:
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": self._system_prompt},
             {"role": "user", "content": question},
@@ -243,6 +273,13 @@ class AgentService:
                     tool_name, arguments, session_variables=session_variables
                 )
                 tool_calls_made += 1
+                logger.info(
+                    "[%s] tool_call=%s arguments=%s result=%s",
+                    self._database_name,
+                    tool_name,
+                    arguments,
+                    json.dumps(result)[:300],
+                )
 
                 if tool_name == "compute_metric":
                     if "error" in result and "Unknown metric" in result.get("error", ""):

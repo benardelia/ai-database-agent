@@ -65,7 +65,10 @@ class DatabaseBundle:
             Path(profile.context_path).read_text() if profile.context_path else None
         )
         self.agent_service = AgentService(
-            llm_provider, self.tool_executor, database_context=database_context
+            llm_provider,
+            self.tool_executor,
+            database_context=database_context,
+            database_name=name,
         )
 
 

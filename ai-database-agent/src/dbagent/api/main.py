@@ -10,6 +10,15 @@ from dbagent.config import settings
 from dbagent.metadata.models import DatabaseSchema, RelationshipMetadata, TableSearchResult
 from dbagent.registry import DatabaseBundle, DatabaseRegistry
 
+# Nothing else in the process configures a handler -- without this, every
+# logger.info() call across the app (including AgentService's per-tool-call
+# trace) is silently dropped, and `docker compose logs` shows nothing but
+# uvicorn's own final "200 OK" access line with no visibility into what the
+# agent actually did to get there.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="AI Database Reasoning Agent")
